@@ -11,14 +11,22 @@ object Chunker {
     private const val MAX_MS = 25_000L
     private const val MAX_SILENCE_SAMPLES = Models.SAMPLE_RATE * 3 / 10 // 0,3 s tra un pezzo e l'altro
 
-    fun next(pending: List<Segment>): List<Segment>? {
+    /**
+     * [voiceOf] (thread Persone): id segmento → voce. Un gruppo si spezza solo quando due voci
+     * entrambe note sono diverse; i pezzi senza voce si uniscono come prima. Vuoto = comportamento di sempre.
+     */
+    fun next(pending: List<Segment>, voiceOf: Map<Long, String?> = emptyMap()): List<Segment>? {
         if (pending.isEmpty()) return null
         val group = mutableListOf(pending.first())
+        var groupVoice = voiceOf[pending.first().id]
         for (s in pending.drop(1)) {
             val last = group.last()
             val gap = s.startMs - last.endMs
             val total = s.endMs - group.first().startMs
+            val v = voiceOf[s.id]
+            if (v != null && groupVoice != null && v != groupVoice) break
             if (gap in -500..JOIN_GAP_MS && total <= MAX_MS && Db.dayOf(s.startMs) == Db.dayOf(group.first().startMs)) {
+                if (groupVoice == null) groupVoice = v
                 group += s
             } else break
         }

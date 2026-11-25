@@ -14,6 +14,8 @@ import androidx.work.workDataOf
 import it.iaco.lifelog.Db
 import it.iaco.lifelog.aree.Aree
 import it.iaco.lifelog.briefing.Briefing
+import it.iaco.lifelog.people.People
+import it.iaco.lifelog.people.Speakers
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -87,10 +89,12 @@ object Assistant {
         val pending = segs.count { it.text == null }
         if (pending > 0) sb.append("ancora da trascrivere: $pending pezzi\n")
         sb.append("\n")
+        val voices = Speakers.voiceMap(db)
         for (s in segs) {
             val t = s.text?.trim().orEmpty()
             if (t.isEmpty()) continue
-            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ?: ").append(t.replace("\n", " ")).append("\n")
+            val who = Speakers.label(s.voice, voices)
+            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ").append(who).append(": ").append(t.replace("\n", " ")).append("\n")
         }
         return sb.toString()
     }
@@ -140,6 +144,7 @@ object Assistant {
         val arr = JSONArray()
         st.keys().forEach { id -> arr.put(JSONObject(st.getJSONObject(id).toString()).put("id", id)) }
         return JSONObject().put("aggiornato", now()).put("impegni", arr).also { Briefing.addState(ctx, it) }
+            .also { o -> runCatching { People.stateFields(ctx, o) } }
     }
 
     // ------------------------------------------------------------- ricezione
@@ -156,6 +161,7 @@ object Assistant {
         gh.read("impegni.json")?.let { File(dir(ctx), "impegni.json").writeText(it) }
         runCatching { Aree.fetch(ctx, gh) } // Seral e università
         runCatching { Briefing.fetch(ctx, gh) }
+        runCatching { People.fetch(ctx, gh) }
         val msg = if (an != null) "Analisi di ieri ricevuta alle ${clock()}" else "Controllato alle ${clock()}: l'analisi di stanotte non è ancora arrivata"
         ctx.fetchStatus = msg
         return msg

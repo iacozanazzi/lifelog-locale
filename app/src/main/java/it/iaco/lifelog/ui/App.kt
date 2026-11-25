@@ -60,6 +60,8 @@ import it.iaco.lifelog.Segment
 import it.iaco.lifelog.Throttle
 import it.iaco.lifelog.TranscribeWorker
 import it.iaco.lifelog.Watchdog
+import it.iaco.lifelog.people.Speakers
+import it.iaco.lifelog.people.Voice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,6 +78,9 @@ private sealed interface Route {
     data class Day(val day: String) : Route
     data object Compare : Route
     data object Settings : Route
+    data object People : Route
+    data class Person(val name: String) : Route
+    data class Voice(val id: String) : Route
     data object Seral : Route
     data object Uni : Route
     data object Review : Route
@@ -88,7 +93,8 @@ fun App(resumeTick: Int) {
     var route by remember { mutableStateOf<Route>(if (prefs.onboardingDone) Route.Main else Route.Setup) }
     var tab by remember { mutableStateOf(Tab.TODAY) }
     var searchQuery by remember { mutableStateOf("") }
-    val openPerson: (String) -> Unit = { name -> searchQuery = name; tab = Tab.SEARCH; route = Route.Main }
+    val openPerson: (String) -> Unit = { name -> route = Route.Person(name) }
+    val searchFor: (String) -> Unit = { name -> searchQuery = name; tab = Tab.SEARCH; route = Route.Main }
     val openArea: (String) -> Unit = { a -> route = if (a == "seral") Route.Seral else Route.Uni }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -104,6 +110,7 @@ fun App(resumeTick: Int) {
     BackHandler(enabled = route != Route.Main || tab != Tab.TODAY) {
         route = when (route) {
             Route.Compare -> Route.Settings
+            is Route.Voice -> Route.People
             Route.Review -> Route.Uni
             Route.Main -> { tab = Tab.TODAY; Route.Main }
             else -> Route.Main
@@ -129,12 +136,15 @@ fun App(resumeTick: Int) {
                         Route.Uni -> UniRoute(tick, onBack = { route = Route.Main }, onReview = { route = Route.Review }, onSetup = { route = Route.Settings })
                         Route.Review -> ReviewRoute(onBack = { route = Route.Uni })
                         Route.Compare -> CompareRoute { route = Route.Settings }
+                        Route.People -> PeopleRoute(tick, onBack = { route = Route.Main }, onPerson = openPerson, onVoice = { route = Route.Voice(it) })
+                        is Route.Person -> PersonRoute(r.name, tick, onBack = { route = Route.People }, onSearch = searchFor)
+                        is Route.Voice -> VoiceRoute(r.id, onBack = { route = Route.People })
                         Route.Settings -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare }, onBack = { route = Route.Main })
                         Route.Main -> when (tab) {
                             Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onPerson = openPerson, onArea = openArea)
                             Tab.DIARY -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.TODO -> TodoRoute(tick, onSetup = { route = Route.Settings })
-                            Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) })
+                            Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) }, onPerson = openPerson, onPeople = { route = Route.People })
                         }
                     }
                 }
@@ -181,9 +191,10 @@ private fun dayTitle(day: String): String {
 private fun daySubtitle(day: String): String =
     LocalDate.parse(day).format(DateTimeFormatter.ofPattern("d MMMM yyyy", ITA))
 
-private fun momentsOf(segs: List<Segment>, gaps: List<Gap>): List<Pair<Long, Moment>> =
-    Exporter.paragraphs(segs).map {
-        it.startMs to Moment("${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}", it.text)
+private fun momentsOf(segs: List<Segment>, gaps: List<Gap>, voices: Map<String, Voice> = emptyMap()): List<Pair<Long, Moment>> =
+    Exporter.paragraphs(segs, byVoice = voices.isNotEmpty()).map { p ->
+        val who = if (voices.isEmpty()) "" else Speakers.label(p.voice, voices).takeIf { w -> w != "?" }?.let { w -> ", $w" }.orEmpty()
+        p.startMs to Moment("${Notifications.hhmm(p.startMs)}–${Notifications.hhmm(p.endMs)}$who", p.text)
     } + gaps.map {
         it.startMs to Moment(
             "${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}",
@@ -229,6 +240,9 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             )
         }
     }
+    // Promemoria persone: si ricalcolano quando cambia il database o ogni minuto circa (analisi appena scaricata).
+    var peopleRows by remember { mutableStateOf(emptyList<PeopleTodayRow>()) }
+    LaunchedEffect(tick / 30) { peopleRows = withContext(Dispatchers.IO) { peopleToday(ctx) } }
     LaunchedEffect(tick, heavy) {
         val h = heavy ?: return@LaunchedEffect
         base = withContext(Dispatchers.IO) {
@@ -266,7 +280,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
     val briefingActions = rememberBriefingActions(onPerson) { briefingBump++ }
     val s = base ?: return
     TodayScreen(
-        s.copy(level = level, speaking = speaking, crash = crash, briefing = briefing),
+        s.copy(level = level, speaking = speaking, crash = crash, briefing = briefing, people = peopleRows),
         briefingActions = briefingActions,
         onToggle = {
             try {
@@ -289,6 +303,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             base = base?.let { b -> b.copy(brief = b.brief?.let { br -> br.copy(todos = br.todos.map { if (it.id == id) it.copy(done = done) else it }) }) }
         },
         onOpenYesterday = { onDay(Assistant.yesterday()) },
+        onPerson = onPerson,
         cards = { AreeTodayCard(tick, onArea) },
     )
 }
@@ -354,7 +369,7 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
 }
 
 @Composable
-private fun SearchRoute(query: String, onQuery: (String) -> Unit, onDay: (String) -> Unit) {
+private fun SearchRoute(query: String, onQuery: (String) -> Unit, onDay: (String) -> Unit, onPerson: (String) -> Unit = onQuery, onPeople: () -> Unit = {}) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
@@ -370,7 +385,7 @@ private fun SearchRoute(query: String, onQuery: (String) -> Unit, onDay: (String
             }
         }
     }
-    SearchScreen(query, hits, onQuery = onQuery, onDay = onDay, people = people)
+    SearchScreen(query, hits, onQuery = onQuery, onDay = onDay, people = people, onPerson = onPerson, onPeople = onPeople)
 }
 
 /** Persone nominate negli impegni, dalle più frequenti. */
@@ -479,7 +494,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
             val segs = db.segmentsOfDay(day)
             val gaps = db.gapsOfDay(day)
             val words = wordsOf(segs)
-            val all = momentsOf(segs, gaps).sortedBy { it.first }
+            val all = momentsOf(segs, gaps, Speakers.voiceMap(ctx)).sortedBy { it.first }
             val sections = all.groupBy { partOfDay(it.first) }.map { (k, v) -> k to v.map { it.second } }
             ui = DayUi(
                 title = dayTitle(day),
