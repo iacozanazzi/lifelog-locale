@@ -184,6 +184,11 @@ class Db private constructor(context: Context) :
     ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
 
     /** Un gruppo di pezzi trascritti insieme: il testo va sul primo, che si allunga fino alla fine del gruppo. */
+    /** Seconda passata (Whisper): sostituisce il testo di un blocco già trascritto. false se il blocco non c'è più. */
+    fun replaceText(id: Long, text: String): Boolean =
+        (writableDatabase.update("segments", ContentValues().apply { put("text", text) },
+            "id=? AND text IS NOT NULL AND text != ''", arrayOf(id.toString())) > 0).also { if (it) bump() }
+
     fun markGroup(group: List<Segment>, text: String) {
         val db = writableDatabase
         db.beginTransaction()

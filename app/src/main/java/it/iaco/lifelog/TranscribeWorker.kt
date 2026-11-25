@@ -101,6 +101,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             Outcome.DONE -> {
                 prefs.transcribeStatus = "Tutto trascritto"
                 DriveSync.syncSoon(ctx)
+                runCatching { Refine.schedule(ctx) }
             }
             Outcome.MORE -> {
                 DriveSync.syncSoon(ctx)
@@ -137,6 +138,11 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 db.markGroup(group, text)
                 try { speakers?.finishGroup(group) } catch (_: Throwable) {}
                 if (audio.isNotEmpty()) Recent.save(ctx, group.first().startMs, audio)
+                // Seconda passata con Whisper in carica: si tiene l'audio del blocco finché non è rifinito.
+                val usedWhisper = engine == Engine.WHISPER || (asr as? AutoAsr)?.lastWasWhisper == true
+                if (audio.isNotEmpty() && text.isNotBlank() && !usedWhisper) {
+                    try { Refine.save(ctx, group.first(), audio) } catch (_: Throwable) {}
+                }
                 group.forEach { g -> g.audioPath?.let { File(it).delete() } }
                 done += group.size
                 prefs.transcribeStatus = "Trascrivo con ${engine.label}… ${db.pendingCount()} pezzi rimasti"

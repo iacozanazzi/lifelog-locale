@@ -78,7 +78,7 @@ object Assistant {
 
     // ------------------------------------------------------------- giorni/AAAA-MM-GG.md
 
-    fun dayMarkdown(db: Db, day: String): String {
+    fun dayMarkdown(db: Db, day: String, ctx: Context? = null): String {
         val segs = db.segmentsOfDay(day)
         val gaps = db.gapsOfDay(day)
         val speechMin = segs.sumOf { it.endMs - it.startMs } / 60_000
@@ -89,6 +89,8 @@ object Assistant {
         sb.append("parlato: $speechMin min · buchi: $buchi\n")
         val pending = segs.count { it.text == null }
         if (pending > 0) sb.append("ancora da trascrivere: $pending pezzi\n")
+        val rough = runCatching { it.iaco.lifelog.Refine.pendingOfDay(ctx ?: return@runCatching 0, day) }.getOrDefault(0)
+        if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
         sb.append("\n")
         val voices = Speakers.voiceMap(db)
         for (s in segs) {
@@ -107,7 +109,7 @@ object Assistant {
         val sp = sp(ctx)
         var sent = 0
         for (d in db.days().take(21)) {
-            val md = dayMarkdown(db, d.day)
+            val md = dayMarkdown(db, d.day, ctx)
             val h = sha1(md)
             if (sp.getString("sent_${d.day}", null) == h) continue
             gh.write("giorni/${d.day}.md", md, "app: giorno ${d.day}")
