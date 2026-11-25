@@ -140,6 +140,9 @@ fun TodayScreen(
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     onOpenYesterday: () -> Unit = {},
     briefingActions: BriefingActions = BriefingActions(),
+    memory: MemoryTodayUi? = null,
+    onMemento: (String) -> Unit = {},
+    onWeek: () -> Unit = {},
 ) {
     val c = Life.c
     Column(Modifier.fillMaxSize()) {
@@ -186,6 +189,8 @@ fun TodayScreen(
                 }
             }
             briefingCards(s.briefing, briefingActions)
+
+            memoryCards(memory, onMemento, onWeek)
 
             s.crash?.let {
                 item {
@@ -622,6 +627,8 @@ fun DayScreen(
     onPerson: (String) -> Unit = {},
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     startOnStory: Boolean = true,
+    memory: DayMemoryUi? = null,
+    onNamePlace: (StayRow) -> Unit = {},
 ) {
     val c = Life.c
     var story by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(startOnStory && s.story != null) }
@@ -645,6 +652,7 @@ fun DayScreen(
                 Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 10.dp))
                 FlowChips(s.people) { onPerson(it) }
             }
+            dayMemorySection(memory, onPerson, onNamePlace)
             st.sections.filter { it.second.isNotEmpty() }.forEach { (title, entries) ->
                 item { Text(title, style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp)) }
                 items(entries) { e -> EntryRow(e, c.text) }
@@ -679,6 +687,7 @@ fun DayScreen(
                 DayLine(s.spans)
                 if (s.pending > 0) Text("${s.pending} frasi ancora da trascrivere.", style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 10.dp))
             }
+            if (s.story == null) dayMemorySection(memory, onPerson, onNamePlace)
             if (s.sections.isEmpty()) item {
                 Text("Niente di trascritto per questo giorno.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 28.dp))
             }

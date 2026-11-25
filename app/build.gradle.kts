@@ -72,6 +72,8 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Memoria: sonno e passi da Samsung Health (Health Connect, Apache-2.0)
+    implementation("androidx.health.connect:connect-client:1.1.0")
 
     // Solo per generare le anteprime delle schermate (non finisce nell'app)
     testImplementation("junit:junit:4.13.2")
