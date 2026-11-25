@@ -29,6 +29,12 @@ import java.io.BufferedOutputStream
  * il silenzio viene buttato subito. I pezzi di parlato vengono salvati in attesa
  * di essere trascritti (di solito quando il telefono è in carica).
  */
+/** Stato dal vivo del microfono, letto dall'interfaccia (stesso processo). */
+object Live {
+    val level = kotlinx.coroutines.flow.MutableStateFlow(0f)
+    val speaking = kotlinx.coroutines.flow.MutableStateFlow(false)
+}
+
 class RecorderService : Service() {
 
     @Volatile private var running = false
@@ -161,7 +167,14 @@ class RecorderService : Service() {
                     Notifications.clearAlert(this)
                 }
 
+                // Livello audio per l'animazione in app (solo in memoria, niente viene salvato).
+                var sum = 0f
+                for (i in 0 until n) sum += floats[i] * floats[i]
+                val rms = kotlin.math.sqrt(sum / n)
+                Live.level.value = (Live.level.value * 0.6f + (rms * 8f).coerceIn(0f, 1f) * 0.4f)
+
                 vad.acceptWaveform(if (n == window) floats else floats.copyOf(n))
+                Live.speaking.value = vad.isSpeechDetected()
                 while (!vad.empty()) {
                     val seg = vad.front()
                     vad.pop()
@@ -200,6 +213,8 @@ class RecorderService : Service() {
             Log.e(TAG, "errore di registrazione", e)
             Notifications.alert(this, "Registrazione interrotta da un errore", "Tocca per riprendere. (${e.message})")
         } finally {
+            Live.level.value = 0f
+            Live.speaking.value = false
             try { rec.stop() } catch (_: Exception) {}
             rec.release()
             vad.release()

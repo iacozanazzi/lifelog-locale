@@ -18,7 +18,7 @@ data class Segment(
 
 data class Gap(val startMs: Long, val endMs: Long, val reason: String)
 
-data class DaySummary(val day: String, val segments: Int, val pending: Int, val chars: Int)
+data class DaySummary(val day: String, val segments: Int, val pending: Int, val chars: Int, val speechMs: Long = 0)
 
 /**
  * Archivio locale: segmenti di parlato (prima in attesa, poi trascritti) e buchi di registrazione.
@@ -92,11 +92,11 @@ class Db private constructor(context: Context) :
 
     fun days(): List<DaySummary> = readableDatabase.rawQuery(
         """SELECT day, COUNT(*), SUM(CASE WHEN text IS NULL THEN 1 ELSE 0 END),
-                  COALESCE(SUM(LENGTH(text)),0)
+                  COALESCE(SUM(LENGTH(text)),0), COALESCE(SUM(end_ms-start_ms),0)
            FROM segments GROUP BY day ORDER BY day DESC""", null
     ).use { c ->
         buildList {
-            while (c.moveToNext()) add(DaySummary(c.getString(0), c.getInt(1), c.getInt(2), c.getInt(3)))
+            while (c.moveToNext()) add(DaySummary(c.getString(0), c.getInt(1), c.getInt(2), c.getInt(3), c.getLong(4)))
         }
     }
 

@@ -27,15 +27,24 @@ jobs:
       - name: Compila APK
         run: ./gradlew --no-daemon :app:assembleRelease
 
+      - name: Anteprime delle schermate
+        continue-on-error: true
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
       - name: Rinomina APK
         run: |
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk out/lifelog-v${{ github.run_number }}.apk
+          mkdir -p screens
+          cp app/build/screens/*.png screens/ 2>/dev/null || true
+          ls screens
 
       - uses: actions/upload-artifact@v4
         with:
           name: lifelog-apk
-          path: out/*.apk
+          path: |
+            out/*.apk
+            screens/*.png
 
       - name: Pubblica come Release (download diretto dal telefono)
         uses: softprops/action-gh-release@v2
@@ -43,5 +52,8 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: Lifelog v${{ github.run_number }}
           body: "APK da installare sul telefono. Istruzioni nel README."
-          files: out/*.apk
+          files: |
+            out/*.apk
+            screens/*.png
+          fail_on_unmatched_files: false
           make_latest: true
