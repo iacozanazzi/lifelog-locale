@@ -30,13 +30,39 @@ interface Asr {
     fun release()
 }
 
-class SherpaAsr(private val rec: OfflineRecognizer) : Asr {
+/**
+ * Whisper a volte "si incanta" e ripete la stessa frase: tengo una sola copia
+ * di qualunque gruppo di 1-8 parole ripetuto 3 o più volte di fila.
+ */
+object Loops {
+    fun clean(text: String): String {
+        var w = text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        for (n in 8 downTo 1) {
+            val out = ArrayList<String>()
+            var i = 0
+            while (i < w.size) {
+                if (i + n <= w.size) {
+                    val unit = w.subList(i, i + n).map { it.lowercase().trim(',', '.', '!', '?') }
+                    var reps = 1
+                    while (i + (reps + 1) * n <= w.size &&
+                        w.subList(i + reps * n, i + (reps + 1) * n).map { it.lowercase().trim(',', '.', '!', '?') } == unit) reps++
+                    if (reps >= 3) { out += w.subList(i, i + n); i += reps * n; continue }
+                }
+                out += w[i]; i++
+            }
+            w = out
+        }
+        return w.joinToString(" ")
+    }
+}
+
+class SherpaAsr(private val rec: OfflineRecognizer, private val fixLoops: Boolean = false) : Asr {
     override suspend fun transcribe(samples: FloatArray): String {
         val stream = rec.createStream()
         return try {
             stream.acceptWaveform(samples, Models.SAMPLE_RATE)
             rec.decode(stream)
-            rec.getResult(stream).text.trim()
+            rec.getResult(stream).text.trim().let { if (fixLoops) Loops.clean(it) else it }
         } finally {
             stream.release()
         }
@@ -144,7 +170,7 @@ object AsrFactory {
 
     fun create(ctx: Context, e: Engine, threads: Int): Asr = when (e) {
         Engine.PARAKEET -> SherpaAsr(OfflineRecognizer(null, Models.recognizerConfig(ctx, threads)))
-        Engine.WHISPER -> SherpaAsr(OfflineRecognizer(null, Models.whisperConfig(ctx, threads)))
+        Engine.WHISPER -> SherpaAsr(OfflineRecognizer(null, Models.whisperConfig(ctx, threads)), fixLoops = true)
         Engine.GOOGLE -> GoogleAsr(ctx.applicationContext)
     }
 }

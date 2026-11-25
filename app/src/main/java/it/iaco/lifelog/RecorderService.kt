@@ -135,10 +135,11 @@ class RecorderService : Service() {
         // Ultimi 30 secondi di audio: servono per aggiungere un margine prima e dopo
         // ogni pezzo di parlato, così l'inizio e la fine delle parole non vengono tagliati.
         val ring = FloatArray(sr * 30)
-        val pad = sr / 4 // 0,25 s
+        val preRoll = sr * 45 / 100 // 0,45 s prima
+        val postRoll = sr * 3 / 10  // 0,3 s dopo
         fun padded(start: Long, len: Int): Pair<Long, FloatArray> {
-            val from = maxOf(start - pad, samplesRead - ring.size + 1, 0L)
-            val to = minOf(start + len + pad, samplesRead)
+            val from = maxOf(start - preRoll, samplesRead - ring.size + 1, 0L)
+            val to = minOf(start + len + postRoll, samplesRead)
             val out = FloatArray((to - from).toInt().coerceAtLeast(0))
             for (i in out.indices) out[i] = ring[((from + i) % ring.size).toInt()]
             return from to out
