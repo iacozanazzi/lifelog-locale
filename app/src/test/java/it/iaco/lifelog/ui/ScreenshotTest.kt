@@ -118,8 +118,9 @@ class ScreenshotTest {
         SettingsScreen(
             SettingsUi(true, true, 37.5f, "Ora: batteria al 64%, 31,2 °C, non in carica.", true, "Salvato alle 16:20 (184 KB)", "0.1.10",
                 engines = listOf(
+                    EngineRow("AUTO", "Automatico", "Parakeet per le voci vicine, Whisper per quelle lontane o deboli, dove sbaglia molto meno.", "Pronto", selected = true, ready = true),
                     EngineRow("PARAKEET", "Parakeet", "Veloce. Riconosce la lingua da solo.", "Pronto", selected = false, ready = true),
-                    EngineRow("WHISPER", "Whisper turbo", "Più preciso in italiano, circa 3 volte più lento. Scarica 564 MB.", "Whisper: download al 41%", selected = true, ready = false),
+                    EngineRow("WHISPER", "Whisper turbo", "Più preciso con voci lontane, circa 5 volte più lento. Scarica 564 MB.", "Whisper: download al 41%", selected = false, ready = false),
                     EngineRow("GOOGLE", "Google sul telefono", "Il riconoscimento vocale di Google, offline.", "Se manca il pacchetto italiano offline, lo scarica Google da solo al primo uso.", selected = false, ready = true),
                 )),
             {}, {}, {}, {}, {}, {}, {}, {}

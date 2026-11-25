@@ -21,7 +21,7 @@ import kotlin.coroutines.resume
 enum class Engine(val label: String, val detail: String) {
     AUTO("Automatico", "Parakeet per le voci vicine, Whisper per quelle lontane o deboli, dove sbaglia molto meno."),
     PARAKEET("Parakeet", "Veloce. Riconosce la lingua da solo."),
-    WHISPER("Whisper turbo", "Più preciso in italiano, circa 3 volte più lento. Scarica 564 MB."),
+    WHISPER("Whisper turbo", "Più preciso con voci lontane, circa 5 volte più lento. Scarica 564 MB."),
     GOOGLE("Google sul telefono", "Il riconoscimento vocale di Google, offline. Serve Android 13 e il pacchetto italiano."),
 }
 
