@@ -325,6 +325,8 @@ private fun kindLabel(t: String) = when (t.lowercase()) {
     "impegno" -> "Impegno"
     "idea" -> "Idea"
     "domanda" -> "Domanda aperta"
+    "fatto" -> "Fatto"
+    "scadenza" -> "Scadenza"
     else -> ""
 }
 
