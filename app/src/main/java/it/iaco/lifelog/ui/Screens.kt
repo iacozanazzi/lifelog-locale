@@ -142,6 +142,9 @@ fun TodayScreen(
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     onOpenYesterday: () -> Unit = {},
     briefingActions: BriefingActions = BriefingActions(),
+    memory: MemoryTodayUi? = null,
+    onMemento: (String) -> Unit = {},
+    onWeek: () -> Unit = {},
     onPerson: (String) -> Unit = {},
     /** Schede delle funzioni (Seral e università, ecc.), sotto "Da ieri". */
     cards: @Composable () -> Unit = {},
@@ -192,6 +195,7 @@ fun TodayScreen(
             }
             briefingCards(s.briefing, briefingActions)
 
+            memoryCards(memory, onMemento, onWeek)
             if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
             item { cards() }
 
@@ -633,6 +637,8 @@ fun DayScreen(
     onPerson: (String) -> Unit = {},
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     startOnStory: Boolean = true,
+    memory: DayMemoryUi? = null,
+    onNamePlace: (StayRow) -> Unit = {},
     /** Apre la schermata di un'area ("seral", "uni") dal titolo della sua sezione. */
     onArea: (String) -> Unit = {},
 ) {
@@ -658,6 +664,7 @@ fun DayScreen(
                 Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 10.dp))
                 FlowChips(s.people) { onPerson(it) }
             }
+            dayMemorySection(memory, onPerson, onNamePlace)
             st.sections.filter { it.second.isNotEmpty() }.forEach { (title, entries) ->
                 item {
                     val area = areaOfSection(title)
@@ -702,6 +709,7 @@ fun DayScreen(
                 DayLine(s.spans)
                 if (s.pending > 0) Text("${s.pending} frasi ancora da trascrivere.", style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 10.dp))
             }
+            if (s.story == null) dayMemorySection(memory, onPerson, onNamePlace)
             if (s.sections.isEmpty()) item {
                 Text("Niente di trascritto per questo giorno.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 28.dp))
             }

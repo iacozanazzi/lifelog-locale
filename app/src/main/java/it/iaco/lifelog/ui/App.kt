@@ -78,6 +78,8 @@ private sealed interface Route {
     data class Day(val day: String) : Route
     data object Compare : Route
     data object Settings : Route
+    data object Week : Route
+    data object Questions : Route
     data object People : Route
     data class Person(val name: String) : Route
     data class Voice(val id: String) : Route
@@ -110,6 +112,7 @@ fun App(resumeTick: Int) {
     BackHandler(enabled = route != Route.Main || tab != Tab.TODAY) {
         route = when (route) {
             Route.Compare -> Route.Settings
+            Route.Questions -> Route.Week
             is Route.Voice -> Route.People
             is Route.Person -> Route.People
             Route.Review -> Route.Uni
@@ -137,12 +140,14 @@ fun App(resumeTick: Int) {
                         Route.Uni -> UniRoute(tick, onBack = { route = Route.Main }, onReview = { route = Route.Review }, onSetup = { route = Route.Settings })
                         Route.Review -> ReviewRoute(onBack = { route = Route.Uni })
                         Route.Compare -> CompareRoute { route = Route.Settings }
+                        Route.Week -> WeekRoute(tick, onBack = { route = Route.Main }, onQuestions = { route = Route.Questions })
+                        Route.Questions -> QuestionsRoute { route = Route.Week }
                         Route.People -> PeopleRoute(tick, onBack = { route = Route.Main }, onPerson = openPerson, onVoice = { route = Route.Voice(it) })
                         is Route.Person -> PersonRoute(r.name, tick, onBack = { route = Route.People }, onSearch = searchFor)
                         is Route.Voice -> VoiceRoute(r.id, onBack = { route = Route.People })
                         Route.Settings -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare }, onBack = { route = Route.Main })
                         Route.Main -> when (tab) {
-                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onPerson = openPerson, onArea = openArea)
+                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onPerson = openPerson, onArea = openArea, onWeek = { route = Route.Week })
                             Tab.DIARY -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.TODO -> TodoRoute(tick, onSetup = { route = Route.Settings })
                             Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) }, onPerson = openPerson, onPeople = { route = Route.People })
@@ -218,7 +223,7 @@ private fun sentences(text: String): List<String> =
     text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.length > 1 }
 
 @Composable
-private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit, onPerson: (String) -> Unit = {}, onArea: (String) -> Unit = {}) {
+private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit, onPerson: (String) -> Unit = {}, onArea: (String) -> Unit = {}, onWeek: () -> Unit = {}) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val db = remember { Db.get(ctx) }
@@ -279,6 +284,8 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
     var briefing by remember { mutableStateOf<BriefingUi?>(null) }
     LaunchedEffect(briefingBump, tick / 30) { briefing = withContext(Dispatchers.IO) { runCatching { briefingOf(ctx) }.getOrNull() } }
     val briefingActions = rememberBriefingActions(onPerson) { briefingBump++ }
+    var memory by remember { mutableStateOf<MemoryTodayUi?>(null) }
+    LaunchedEffect(dbVersion, Db.today()) { memory = withContext(Dispatchers.IO) { runCatching { memoryTodayUi(ctx) }.getOrNull() } }
     val s = base ?: return
     TodayScreen(
         s.copy(level = level, speaking = speaking, crash = crash, briefing = briefing, people = peopleRows),
@@ -304,6 +311,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             base = base?.let { b -> b.copy(brief = b.brief?.let { br -> br.copy(todos = br.todos.map { if (it.id == id) it.copy(done = done) else it }) }) }
         },
         onOpenYesterday = { onDay(Assistant.yesterday()) },
+        memory = memory, onMemento = onDay, onWeek = onWeek,
         onPerson = onPerson,
         cards = { AreeTodayCard(tick, onArea) },
     )
@@ -490,6 +498,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
     var ui by remember { mutableStateOf<DayUi?>(null) }
     var plain by remember { mutableStateOf("") }
     val dbVersion = remember(tick) { db.version }
+    val mem = rememberDayMemory(day, dbVersion)
     LaunchedEffect(day, dbVersion, tick / 15) {
         withContext(Dispatchers.IO) {
             val segs = db.segmentsOfDay(day)
@@ -517,6 +526,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
                 Assistant.setDone(ctx, id, done)
                 ui = u.copy(todos = u.todos.map { if (it.id == id) it.copy(done = done) else it })
             },
+            memory = mem.ui, onNamePlace = mem.onName,
         )
     }
 }
