@@ -37,12 +37,14 @@ object Exporter {
     private val iso = DateTimeFormatter.ISO_OFFSET_DATE_TIME
     private fun isoOf(ms: Long) = Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(iso)
 
-    fun markdown(db: Db): String {
+    fun markdown(db: Db, newestFirst: Boolean = false): String {
         val paras = paragraphs(db.allTranscribed())
         val gaps = db.allGaps()
         val sb = StringBuilder("# Lifelog: trascrizioni\n\n")
-        sb.append("Esportato il ${isoOf(System.currentTimeMillis())}. Trascrizione automatica: può contenere errori.\n")
+        sb.append("Aggiornato il ${isoOf(System.currentTimeMillis())}. Trascrizione automatica: può contenere errori, non distingue chi parla.\n")
+        if (newestFirst) sb.append("Giorni dal più recente al più vecchio.\n")
         val byDay = (paras.map { Db.dayOf(it.startMs) } + gaps.map { Db.dayOf(it.startMs) }).distinct().sorted()
+            .let { if (newestFirst) it.reversed() else it }
         for (day in byDay) {
             sb.append("\n## $day\n\n")
             val items = paras.filter { Db.dayOf(it.startMs) == day }.map { it.startMs to "**${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}** ${it.text}" } +
@@ -82,7 +84,15 @@ object Exporter {
     }
 
     fun write(ctx: Context, uri: Uri, content: String) {
-        ctx.contentResolver.openOutputStream(uri, "wt")?.use { it.write(content.toByteArray()) }
-            ?: error("Impossibile scrivere il file")
+        val bytes = content.toByteArray()
+        // "wt" = sovrascrivi; alcuni fornitori (es. Google Drive) accettano solo "w".
+        val out = try {
+            ctx.contentResolver.openOutputStream(uri, "wt")
+        } catch (e: SecurityException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } ?: ctx.contentResolver.openOutputStream(uri, "w")
+        out?.use { it.write(bytes) } ?: error("Impossibile scrivere il file")
     }
 }

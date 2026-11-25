@@ -23,6 +23,16 @@ App Android che ascolta durante la giornata, tiene **solo i momenti in cui qualc
 - **Watchdog**: se Samsung chiude l'app, al rientro salva il "buco" (es. "non registrato 10:12–10:40") e ti manda una notifica con i minuti persi.
 - **Elenco per giorno, ricerca, export** in Markdown o JSON (per farlo leggere poi a Claude o ChatGPT).
 
+## Collegare Google Drive (per chiedere a Claude)
+
+1. Nella schermata principale di Lifelog tocca **Collega Google Drive**.
+2. Si apre il selettore di file di Android: tocca il menu ☰ in alto a sinistra e scegli **Drive**.
+3. Entra nella cartella che vuoi (o lascia "Il mio Drive") e premi **Salva**. Il file si chiama `Lifelog.md`.
+4. Da quel momento l'app lo riscrive da sola dopo ogni trascrizione e ogni 6 ore circa (pulsante "Sincronizza ora" per farlo subito). L'app Google Drive del telefono lo carica online.
+5. In Claude, con il connettore Google Drive attivo, chiedi ad esempio: "Leggi il file Lifelog.md sul mio Drive e dimmi di cosa ho parlato martedì".
+
+Il file contiene solo testo, con i giorni dal più recente al più vecchio. Niente audio.
+
 ## Limiti da sapere (onestamente)
 
 - **Android non permette di riaccendere il microfono da solo.** Da Android 14 un'app in sottofondo non può riavviare il microfono senza che tu la tocchi. Quindi se Samsung la chiude, l'app non riparte da sola: ti avvisa con una notifica e basta toccarla. Le impostazioni Samsung del passo 4 servono a far succedere questo il meno possibile.
@@ -38,7 +48,6 @@ Registrare conversazioni di altre persone senza che lo sappiano è rischioso in 
 ## Prossimi passi
 
 - Server MCP che legge l'export, così Claude/ChatGPT possono rispondere a domande sul tuo passato.
-- Export automatico giornaliero in una cartella.
 
 ## Per sviluppatori
 

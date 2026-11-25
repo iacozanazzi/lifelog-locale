@@ -98,8 +98,14 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             executor.shutdown()
         }
         when (outcome) {
-            Outcome.DONE -> prefs.transcribeStatus = "Tutto trascritto"
-            Outcome.MORE -> schedule(ctx, 0, ExistingWorkPolicy.APPEND_OR_REPLACE, manual)
+            Outcome.DONE -> {
+                prefs.transcribeStatus = "Tutto trascritto"
+                DriveSync.syncSoon(ctx)
+            }
+            Outcome.MORE -> {
+                DriveSync.syncSoon(ctx)
+                schedule(ctx, 0, ExistingWorkPolicy.APPEND_OR_REPLACE, manual)
+            }
             Outcome.PAUSED -> schedule(ctx, 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
             Outcome.STOPPED -> {}
         }

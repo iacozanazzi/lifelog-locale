@@ -38,6 +38,15 @@ class Prefs(context: Context) {
         get() = sp.getString("transcribe_status", "") ?: ""
         set(v) = sp.edit().putString("transcribe_status", v).apply()
 
+    /** File su Google Drive (scelto dall'utente) dove salvare le trascrizioni. */
+    var driveUri: String
+        get() = sp.getString("drive_uri", "") ?: ""
+        set(v) = sp.edit().putString("drive_uri", v).apply()
+
+    var driveStatus: String
+        get() = sp.getString("drive_status", "") ?: ""
+        set(v) = sp.edit().putString("drive_status", v).apply()
+
     var onboardingDone: Boolean
         get() = sp.getBoolean("onboarding_done", false)
         set(v) = sp.edit().putBoolean("onboarding_done", v).apply()

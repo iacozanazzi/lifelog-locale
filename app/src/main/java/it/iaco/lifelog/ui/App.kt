@@ -59,6 +59,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import it.iaco.lifelog.CrashLog
 import it.iaco.lifelog.Db
+import it.iaco.lifelog.DriveSync
 import it.iaco.lifelog.DaySummary
 import it.iaco.lifelog.Exporter
 import it.iaco.lifelog.ModelSetupWorker
@@ -174,6 +175,8 @@ private fun HomeScreen(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
                 }
             }
         }
+
+        item { DriveCard(tick) }
 
         item {
             OutlinedTextField(
@@ -542,6 +545,50 @@ private fun CrashCard() {
                     ctx.startActivity(Intent.createChooser(send, "Condividi errore"))
                 }) { Text("Condividi") }
                 OutlinedButton(onClick = { CrashLog.clear(ctx); report = null }) { Text("Chiudi") }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Google Drive
+
+@Composable
+private fun DriveCard(tick: Int) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var configured by remember { mutableStateOf(DriveSync.isConfigured(ctx)) }
+    val status = remember(tick, configured) { prefs.driveStatus }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
+        if (uri != null) {
+            DriveSync.setTarget(ctx, uri)
+            configured = true
+            Toast.makeText(ctx, "Collegato. Primo salvataggio in corso…", Toast.LENGTH_SHORT).show()
+        }
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Google Drive (per chiedere a Claude)", fontWeight = FontWeight.Bold)
+            if (!configured) {
+                Text(
+                    "Le trascrizioni (solo testo) vengono copiate in un file su Drive e aggiornate da sole. " +
+                        "Tocca il pulsante, apri il menu ☰ in alto a sinistra, scegli \"Drive\", " +
+                        "entra nella cartella che vuoi e premi \"Salva\".",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Button(onClick = { pick.launch("Lifelog.md") }) { Text("Collega Google Drive") }
+            } else {
+                Text("Si aggiorna da solo dopo ogni trascrizione e ogni 6 ore.", style = MaterialTheme.typography.bodySmall)
+                if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            val msg = DriveSync.syncBlocking(ctx)
+                            withContext(Dispatchers.Main) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
+                        }
+                    }) { Text("Sincronizza ora") }
+                    TextButton(onClick = { DriveSync.disconnect(ctx); configured = false }) { Text("Scollega") }
+                }
             }
         }
     }
