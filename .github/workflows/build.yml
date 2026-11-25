@@ -60,10 +60,13 @@ jobs:
             gh release view "$TAG" >/dev/null 2>&1 && break
             sleep 10
           done
-          ok=0
-          for i in 1 2 3 4; do gh release upload "$TAG" out/*.apk --clobber && ok=1 && break; sleep 10; done
-          [ "$ok" = 1 ] || exit 1
+          # GitHub a volte risponde 500 anche quando il file è arrivato:
+          # dopo ogni tentativo controllo se c'è davvero.
+          has() { gh release view "$TAG" --json assets -q '.assets[].name' | grep -qx "$1"; }
+          apk=$(basename out/*.apk)
+          for i in 1 2 3 4; do gh release upload "$TAG" "out/$apk" --clobber || true; sleep 3; has "$apk" && break; done
+          has "$apk"
           for f in screens/*.png; do
             [ -f "$f" ] || continue
-            for i in 1 2 3; do gh release upload "$TAG" "$f" --clobber && break; sleep 5; done || true
+            for i in 1 2 3; do gh release upload "$TAG" "$f" --clobber || true; has "$(basename "$f")" && break; sleep 5; done
           done

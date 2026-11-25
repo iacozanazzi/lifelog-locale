@@ -42,7 +42,7 @@ object Chunker {
         val joined = FloatArray(total)
         var i = 0
         for (p in out) { p.copyInto(joined, i); i += p.size }
-        return Pcm.normalize(joined)
+        return joined // normalizzare il volume non migliorava i risultati nei test
     }
 }
 
