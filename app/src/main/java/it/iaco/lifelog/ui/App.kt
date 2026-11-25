@@ -111,6 +111,7 @@ fun App(resumeTick: Int) {
         route = when (route) {
             Route.Compare -> Route.Settings
             is Route.Voice -> Route.People
+            is Route.Person -> Route.People
             Route.Review -> Route.Uni
             Route.Main -> { tab = Tab.TODAY; Route.Main }
             else -> Route.Main
