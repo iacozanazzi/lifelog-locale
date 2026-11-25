@@ -47,8 +47,24 @@ object Speakers {
             .any { !it.state.isFinished }
     }.getOrDefault(false)
 
-    /** Solo su richiesta di Iaco (schermata Persone), mai in automatico. */
+    private fun sp(ctx: Context) = ctx.getSharedPreferences("lifelog", Context.MODE_PRIVATE)
+
+    /**
+     * All'avvio dell'app: scarica il modello da solo (29 MB, anche con i dati), a meno che Iaco
+     * non abbia scelto "dimentica tutte le voci". Senza modello le voci non si riconoscono mai.
+     */
+    fun autoDownload(ctx: Context) {
+        if (ready(ctx) || sp(ctx).getBoolean("voices_off", false)) return
+        enqueue(ctx)
+    }
+
+    /** Tocco su "scarica" nella schermata Persone: riattiva anche dopo "dimentica tutto". */
     fun download(ctx: Context) {
+        sp(ctx).edit().putBoolean("voices_off", false).apply()
+        enqueue(ctx)
+    }
+
+    private fun enqueue(ctx: Context) {
         val req = OneTimeWorkRequestBuilder<DownloadVoiceModel>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
@@ -57,6 +73,7 @@ object Speakers {
 
     /** Cancella modello, impronte e tutte le etichette dei parlanti. Le trascrizioni restano. */
     fun forgetAll(ctx: Context) {
+        sp(ctx).edit().putBoolean("voices_off", true).apply()
         Db.get(ctx).clearAllVoices()
         modelFile(ctx).delete()
         okMarker(ctx).delete()

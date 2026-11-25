@@ -10,5 +10,7 @@ class LifelogApp : Application() {
         Notifications.createChannels(this)
         // Un errore dei luoghi non deve mai impedire all'app (e alla registrazione) di partire.
         runCatching { Places.schedule(this) }
+        // Modello delle voci: si scarica da solo una volta (senza, nessuna voce viene riconosciuta).
+        runCatching { it.iaco.lifelog.people.Speakers.autoDownload(this) }
     }
 }
