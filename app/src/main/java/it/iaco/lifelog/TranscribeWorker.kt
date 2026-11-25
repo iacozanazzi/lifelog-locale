@@ -119,6 +119,8 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         prefs.transcribeStatus = "Carico ${engine.label}…"
         val threads = if (engine != Engine.PARAKEET && Throttle.battery(ctx).plugged) 4 else 2
         val asr = AsrFactory.create(ctx, engine, threads)
+        // Persone: chi parla. Nessun effetto se il modello delle voci non è scaricato; ogni errore → voce sconosciuta.
+        val speakers = try { it.iaco.lifelog.people.Speakers.Labeler.createOrNull(ctx) } catch (_: Throwable) { null }
         var done = 0
         try {
             while (true) {
@@ -127,10 +129,13 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     prefs.transcribeStatus = it
                     return Outcome.PAUSED
                 }
-                val group = Chunker.next(db.pendingBatch(40)) ?: return Outcome.DONE
+                val batch = db.pendingBatch(40)
+                try { speakers?.labelAll(batch) } catch (_: Throwable) {}
+                val group = Chunker.next(batch, speakers?.voices ?: emptyMap()) ?: return Outcome.DONE
                 val audio = Chunker.audioOf(group)
                 val text = if (audio.isEmpty()) "" else asr.transcribe(audio)
                 db.markGroup(group, text)
+                try { speakers?.finishGroup(group) } catch (_: Throwable) {}
                 if (audio.isNotEmpty()) Recent.save(ctx, group.first().startMs, audio)
                 group.forEach { g -> g.audioPath?.let { File(it).delete() } }
                 done += group.size
@@ -144,6 +149,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             return Outcome.PAUSED
         } finally {
             asr.release()
+            try { speakers?.release() } catch (_: Throwable) {}
         }
     }
 
