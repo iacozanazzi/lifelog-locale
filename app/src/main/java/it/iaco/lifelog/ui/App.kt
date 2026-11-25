@@ -439,9 +439,9 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
                 val state = when {
                     e == Engine.WHISPER && !ready -> when (wInfo?.state) {
                         WorkInfo.State.RUNNING -> wInfo.progress.getString(ModelSetupWorker.KEY_STAGE) ?: "Download in corso…"
-                        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In attesa del Wi-Fi per scaricare"
+                        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In attesa di connessione. Tocca per scaricarlo subito con i dati mobili."
                         WorkInfo.State.FAILED -> "Download non riuscito. Tocca per riprovare."
-                        else -> "Tocca per scaricarlo (564 MB, serve il Wi-Fi)"
+                        else -> "Tocca per scaricarlo (564 MB, va bene anche con i dati mobili)"
                     }
                     e == Engine.AUTO && ready && !Models.whisperReady(ctx) -> "Per ora usa solo Parakeet. Tocca Whisper qui sotto per scaricarlo: poi lo uso da solo per le voci lontane."
                     e == Engine.AUTO && ready -> "Pronto"
@@ -489,8 +489,8 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
             val e = Engine.valueOf(key)
             if (e == Engine.WHISPER && !Models.whisperReady(ctx)) {
                 // Scarico e basta: in Automatico verrà usato da solo per le voci lontane.
-                ModelSetupWorker.startWhisper(ctx, wifiOnly = true)
-                Toast.makeText(ctx, "Scarico Whisper (564 MB, col Wi-Fi). In Automatico lo uso per le voci lontane.", Toast.LENGTH_LONG).show()
+                if (wInfo?.state != WorkInfo.State.RUNNING) ModelSetupWorker.startWhisper(ctx, wifiOnly = false)
+                Toast.makeText(ctx, "Scarico Whisper (564 MB, anche con i dati mobili). In Automatico lo uso per le voci lontane.", Toast.LENGTH_LONG).show()
             } else if (e == Engine.GOOGLE && !AsrFactory.ready(ctx, e)) {
                 Toast.makeText(ctx, "Google sul telefono richiede Android 13", Toast.LENGTH_LONG).show()
             } else {

@@ -177,7 +177,7 @@ class ModelSetupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                         .build()
                 )
                 .build()
-            WorkManager.getInstance(ctx).enqueueUniqueWork(NAME_WHISPER, ExistingWorkPolicy.KEEP, req)
+            WorkManager.getInstance(ctx).enqueueUniqueWork(NAME_WHISPER, ExistingWorkPolicy.REPLACE, req)
         }
 
         fun start(ctx: Context, wifiOnly: Boolean) {
