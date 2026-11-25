@@ -170,10 +170,14 @@ class GoogleAsr(private val ctx: Context) : Asr {
 class AutoAsr(private val ctx: Context, private val threads: Int) : Asr {
     private val parakeet = AsrFactory.create(ctx, Engine.PARAKEET, 2)
     private var whisper: Asr? = null
+    /** L'ultimo blocco è stato fatto con Whisper (niente seconda passata). */
+    var lastWasWhisper = false
+        private set
 
     override suspend fun transcribe(samples: FloatArray): String {
         val quiet = Level.speechDbfs(samples) < QUIET_DBFS
-        if (quiet && Models.whisperReady(ctx)) {
+        lastWasWhisper = quiet && Models.whisperReady(ctx)
+        if (lastWasWhisper) {
             val w = whisper ?: AsrFactory.create(ctx, Engine.WHISPER, threads).also { whisper = it }
             return w.transcribe(samples)
         }
