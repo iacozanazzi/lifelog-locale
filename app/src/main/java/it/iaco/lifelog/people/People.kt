@@ -172,9 +172,10 @@ object People {
             bySlug[r.slug] = build(r.name, r.slug, r, v)
         }
         // Voci con un nome che Claude non ha ancora in persone.json (le avrà dalla notte dopo).
-        for (v in voices.filter { it.name != null }) {
-            val slug = v.persona ?: Speakers.slug(v.name!!)
-            if (slug !in bySlug) bySlug[slug] = build(v.name, slug, null, v)
+        for (v in voices) {
+            val n = v.name ?: continue
+            val slug = v.persona ?: Speakers.slug(n)
+            if (slug !in bySlug) bySlug[slug] = build(n, slug, null, v)
         }
         return bySlug.values.sortedWith(compareByDescending<Person> { it.lastSeen ?: LocalDate.MIN }.thenBy { it.name })
     }
