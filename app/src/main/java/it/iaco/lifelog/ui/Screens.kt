@@ -143,6 +143,8 @@ fun TodayScreen(
     onOpenYesterday: () -> Unit = {},
     briefingActions: BriefingActions = BriefingActions(),
     onPerson: (String) -> Unit = {},
+    /** Schede delle funzioni (Seral e università, ecc.), sotto "Da ieri". */
+    cards: @Composable () -> Unit = {},
 ) {
     val c = Life.c
     Column(Modifier.fillMaxSize()) {
@@ -191,6 +193,7 @@ fun TodayScreen(
             briefingCards(s.briefing, briefingActions)
 
             if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
+            item { cards() }
 
             s.crash?.let {
                 item {
@@ -630,6 +633,8 @@ fun DayScreen(
     onPerson: (String) -> Unit = {},
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     startOnStory: Boolean = true,
+    /** Apre la schermata di un'area ("seral", "uni") dal titolo della sua sezione. */
+    onArea: (String) -> Unit = {},
 ) {
     val c = Life.c
     var story by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(startOnStory && s.story != null) }
@@ -654,7 +659,17 @@ fun DayScreen(
                 FlowChips(s.people) { onPerson(it) }
             }
             st.sections.filter { it.second.isNotEmpty() }.forEach { (title, entries) ->
-                item { Text(title, style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp)) }
+                item {
+                    val area = areaOfSection(title)
+                    if (area == null) Text(title, style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp))
+                    else Row(
+                        Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp).clickable { onArea(area) },
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        Text(title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
+                        Text(if (area == "seral") "Idee e serate" else "Ripasso ed esami", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent)
+                    }
+                }
                 items(entries) { e -> EntryRow(e, c.text) }
             }
             if (s.todos.isNotEmpty()) {
