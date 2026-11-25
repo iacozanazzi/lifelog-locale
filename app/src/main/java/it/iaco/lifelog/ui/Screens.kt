@@ -193,7 +193,7 @@ fun TodayScreen(
 
         if (s.latest.isNotEmpty()) {
             item { Eyebrow("Ultime parole") }
-            items(s.latest) { m -> MomentRow(m) }
+            items(s.latest) { m -> TimelineItem(m) }
         }
 
         item {
@@ -346,7 +346,7 @@ fun DayScreen(s: DayUi, onBack: () -> Unit) {
 }
 
 @Composable
-private fun TimelineItem(m: Moment) {
+fun TimelineItem(m: Moment) {
     val c = Life.c
     Row(Modifier.fillMaxWidth()) {
         Column(Modifier.width(64.dp)) {
@@ -623,7 +623,7 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
             val sel = tab == current
             Row(
                 Modifier
-                    .weight(1f)
+                    .weight(if (sel) 1.9f else 1f)
                     .clip(RoundedCornerShape(50))
                     .background(if (sel) c.voice.copy(alpha = 0.14f) else Color.Transparent)
                     .clickable { onSelect(tab) }
@@ -634,7 +634,7 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
                 TabIcon(icon, sel)
                 if (sel) {
                     Spacer(Modifier.width(8.dp))
-                    Text(label, color = c.voice, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text(label, color = c.voice, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1, softWrap = false)
                 }
             }
         }
