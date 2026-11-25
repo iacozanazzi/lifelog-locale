@@ -37,7 +37,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import it.iaco.lifelog.AsrFactory
 import it.iaco.lifelog.CrashLog
+import it.iaco.lifelog.Engine
+import it.iaco.lifelog.Pcm
+import it.iaco.lifelog.Recent
 import it.iaco.lifelog.Db
 import it.iaco.lifelog.DriveSync
 import it.iaco.lifelog.Exporter
@@ -66,6 +70,7 @@ private sealed interface Route {
     data object Main : Route
     data object Setup : Route
     data class Day(val day: String) : Route
+    data object Compare : Route
 }
 
 @Composable
@@ -100,11 +105,12 @@ fun App(resumeTick: Int) {
                             route = Route.Main
                         }
                         is Route.Day -> DayRoute(r.day, tick) { route = Route.Main }
+                        Route.Compare -> CompareRoute { route = Route.Main }
                         Route.Main -> when (tab) {
                             Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
                             Tab.DAYS -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.SEARCH -> SearchRoute(onDay = { route = Route.Day(it) })
-                            Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup })
+                            Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare })
                         }
                     }
                 }
@@ -326,12 +332,16 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit) {
 // =============================================================== Impostazioni
 
 @Composable
-private fun SettingsRoute(tick: Int, onSetup: () -> Unit) {
+private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
     var version by remember { mutableIntStateOf(0) } // forza la rilettura dopo un cambio
-    val ui = remember(tick, version) {
+    val whisperWork by WorkManager.getInstance(ctx)
+        .getWorkInfosForUniqueWorkFlow(ModelSetupWorker.NAME_WHISPER)
+        .collectAsState(initial = emptyList())
+    val wInfo = whisperWork.firstOrNull()
+    val ui = remember(tick, version, wInfo?.state, wInfo?.progress) {
         SettingsUi(
             onlyCharging = prefs.onlyWhileCharging,
             waitCharge = prefs.minChargePercent > 0,
@@ -344,6 +354,22 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit) {
             version = try {
                 ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
             } catch (_: Exception) { "" },
+            engines = Engine.entries.map { e ->
+                val ready = AsrFactory.ready(ctx, e)
+                val state = when {
+                    e == Engine.WHISPER && !ready -> when (wInfo?.state) {
+                        WorkInfo.State.RUNNING -> wInfo.progress.getString(ModelSetupWorker.KEY_STAGE) ?: "Download in corso…"
+                        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In attesa del Wi-Fi per scaricare"
+                        WorkInfo.State.FAILED -> "Download non riuscito. Tocca per riprovare."
+                        else -> "Tocca per scaricarlo (564 MB, serve il Wi-Fi)"
+                    }
+                    e == Engine.GOOGLE && !ready -> "Serve Android 13 o più recente"
+                    e == Engine.GOOGLE -> "Se manca il pacchetto italiano offline, lo scarica Google da solo al primo uso."
+                    !ready -> "Non ancora scaricato"
+                    else -> "Pronto"
+                }
+                EngineRow(e.name, e.label, e.detail, state, selected = prefs.engine == e, ready = ready)
+            },
         )
     }
     val pickDrive = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
@@ -377,7 +403,65 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit) {
         onExportMd = { exportMd.launch("lifelog-${LocalDate.now()}.md") },
         onExportJson = { exportJson.launch("lifelog-${LocalDate.now()}.json") },
         onSetup = onSetup,
+        onEngine = { key ->
+            val e = Engine.valueOf(key)
+            if (e == Engine.WHISPER && !Models.whisperReady(ctx)) {
+                ModelSetupWorker.startWhisper(ctx, wifiOnly = true)
+                Toast.makeText(ctx, "Scarico Whisper. Lo uso appena è pronto.", Toast.LENGTH_LONG).show()
+            }
+            if (e == Engine.GOOGLE && !AsrFactory.ready(ctx, e)) {
+                Toast.makeText(ctx, "Google sul telefono richiede Android 13", Toast.LENGTH_LONG).show()
+            } else {
+                prefs.engine = e
+            }
+            version++
+        },
+        onCompare = onCompare,
     )
+}
+
+// =============================================================== Confronta motori
+
+@Composable
+private fun CompareRoute(onBack: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var ui by remember { mutableStateOf(CompareUi(running = false, status = "", rows = emptyList())) }
+    BackHandler(onBack = onBack)
+    val fmt = remember { DateTimeFormatter.ofPattern("EEEE d, HH:mm", ITA) }
+    CompareScreen(ui, onBack = onBack, onRun = {
+        scope.launch(Dispatchers.Default) {
+            val clips = Recent.list(ctx, 4)
+            if (clips.isEmpty()) {
+                ui = CompareUi(false, "Non ci sono ancora frasi trascritte da confrontare. Registra un po' e riprova.", emptyList())
+                return@launch
+            }
+            val audio = clips.map { (start, f) -> start to Pcm.read(f) }
+            val results = audio.map { mutableListOf<Pair<String, String>>() }
+            val engines = Engine.entries.filter { AsrFactory.ready(ctx, it) }
+            for (e in engines) {
+                ui = ui.copy(running = true, status = "Trascrivo con ${e.label}…")
+                val asr = try { AsrFactory.create(ctx, e, threads = 4) } catch (ex: Throwable) {
+                    results.forEach { it += e.label to "Errore: ${ex.message}" }; continue
+                }
+                try {
+                    audio.forEachIndexed { i, (_, a) ->
+                        val t0 = System.currentTimeMillis()
+                        val text = try { asr.transcribe(a) } catch (ex: Throwable) { "Errore: ${ex.message}" }
+                        val secs = (System.currentTimeMillis() - t0) / 1000.0
+                        results[i] += "${e.label}, %.1f s".format(ITA, secs) to text
+                        ui = ui.copy(rows = audio.mapIndexed { j, (st, _) ->
+                            CompareRow(Instant.ofEpochMilli(st).atZone(zone).format(fmt).replaceFirstChar { it.uppercase() }, results[j].toList())
+                        })
+                    }
+                } finally {
+                    asr.release()
+                }
+            }
+            val missing = Engine.entries.filter { it !in engines }.joinToString { it.label }
+            ui = ui.copy(running = false, status = if (missing.isEmpty()) "Fatto." else "Fatto. Non pronti: $missing.")
+        }
+    })
 }
 
 private suspend fun export(ctx: Context, uri: Uri, md: Boolean) {

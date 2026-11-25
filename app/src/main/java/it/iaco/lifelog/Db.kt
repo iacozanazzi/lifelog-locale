@@ -66,6 +66,34 @@ class Db private constructor(context: Context) :
         null
     ).use { c -> if (c.moveToFirst()) c.toSegment() else null }
 
+    fun pendingBatch(limit: Int): List<Segment> = readableDatabase.rawQuery(
+        "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT $limit",
+        null
+    ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
+
+    /** Un gruppo di pezzi trascritti insieme: il testo va sul primo, che si allunga fino alla fine del gruppo. */
+    fun markGroup(group: List<Segment>, text: String) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val first = group.first()
+            db.update("segments", ContentValues().apply {
+                put("text", text)
+                put("end_ms", maxOf(first.endMs, group.last().endMs))
+                putNull("audio_path")
+            }, "id=?", arrayOf(first.id.toString()))
+            for (g in group.drop(1)) {
+                db.update("segments", ContentValues().apply {
+                    put("text", "")
+                    putNull("audio_path")
+                }, "id=?", arrayOf(g.id.toString()))
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     fun pendingCount(): Int = readableDatabase.rawQuery(
         "SELECT COUNT(*) FROM segments WHERE text IS NULL", null
     ).use { c -> if (c.moveToFirst()) c.getInt(0) else 0 }

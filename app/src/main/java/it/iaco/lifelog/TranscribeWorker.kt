@@ -14,7 +14,6 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -60,7 +59,7 @@ object Throttle {
 }
 
 /**
- * Trascrive i pezzi di parlato in attesa con Parakeet, tutto sul telefono.
+ * Trascrive i pezzi di parlato in attesa con il motore scelto, tutto sul telefono.
  * Usa solo 2 thread a bassa priorità e si ferma se la batteria si scalda.
  * Lavora a blocchi di ~8 minuti (limite di Android per i lavori in sottofondo)
  * e poi si rimette in coda da solo.
@@ -71,8 +70,9 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         val ctx = applicationContext
         val prefs = Prefs(ctx)
         val manual = inputData.getBoolean(KEY_MANUAL, false)
-        if (!Models.parakeetReady(ctx)) {
-            prefs.transcribeStatus = "Modello di trascrizione non ancora scaricato"
+        // Se il motore scelto non è ancora pronto (es. Whisper in download) uso Parakeet.
+        val engine = listOf(prefs.engine, Engine.PARAKEET).firstOrNull { AsrFactory.ready(ctx, it) } ?: run {
+            prefs.transcribeStatus = "Il modello di trascrizione non è ancora scaricato"
             return Result.success()
         }
         val db = Db.get(ctx)
@@ -93,7 +93,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             }, "lifelog-asr")
         }
         val outcome = try {
-            withContext(executor.asCoroutineDispatcher()) { runBatch(ctx, db, prefs, manual) }
+            withContext(executor.asCoroutineDispatcher()) { runBatch(ctx, db, prefs, manual, engine) }
         } finally {
             executor.shutdown()
         }
@@ -114,10 +114,11 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
 
     private enum class Outcome { DONE, MORE, PAUSED, STOPPED }
 
-    private fun runBatch(ctx: Context, db: Db, prefs: Prefs, manual: Boolean): Outcome {
+    private suspend fun runBatch(ctx: Context, db: Db, prefs: Prefs, manual: Boolean, engine: Engine): Outcome {
         val deadline = System.currentTimeMillis() + 8 * 60_000
-        prefs.transcribeStatus = "Carico il modello…"
-        val recognizer = OfflineRecognizer(null, Models.recognizerConfig(ctx, threads = 2))
+        prefs.transcribeStatus = "Carico ${engine.label}…"
+        val threads = if (engine == Engine.WHISPER && Throttle.battery(ctx).plugged) 4 else 2
+        val asr = AsrFactory.create(ctx, engine, threads)
         var done = 0
         try {
             while (true) {
@@ -126,44 +127,24 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     prefs.transcribeStatus = it
                     return Outcome.PAUSED
                 }
-                val seg = db.nextPending() ?: return Outcome.DONE
-                val file = seg.audioPath?.let { File(it) }
-                val text = if (file != null && file.exists()) {
-                    val samples = readPcm16(file)
-                    val stream = recognizer.createStream()
-                    try {
-                        stream.acceptWaveform(samples, Models.SAMPLE_RATE)
-                        recognizer.decode(stream)
-                        recognizer.getResult(stream).text.trim()
-                    } finally {
-                        stream.release()
-                    }
-                } else ""
-                db.markTranscribed(seg.id, text)
-                file?.delete()
-                done++
-                prefs.transcribeStatus = "Trascrivo… ${db.pendingCount()} pezzi rimasti"
+                val group = Chunker.next(db.pendingBatch(40)) ?: return Outcome.DONE
+                val audio = Chunker.audioOf(group)
+                val text = if (audio.isEmpty()) "" else asr.transcribe(audio)
+                db.markGroup(group, text)
+                if (audio.isNotEmpty()) Recent.save(ctx, group.first().startMs, audio)
+                group.forEach { g -> g.audioPath?.let { File(it).delete() } }
+                done += group.size
+                prefs.transcribeStatus = "Trascrivo con ${engine.label}… ${db.pendingCount()} pezzi rimasti"
                 setProgressAsync(workDataOf("done" to done))
                 if (System.currentTimeMillis() > deadline) return Outcome.MORE
             }
         } catch (e: Exception) {
             Log.e("TranscribeWorker", "errore", e)
-            prefs.transcribeStatus = "Errore di trascrizione: ${e.message}"
+            prefs.transcribeStatus = "Errore di trascrizione (${engine.label}): ${e.message}"
             return Outcome.PAUSED
         } finally {
-            recognizer.release()
+            asr.release()
         }
-    }
-
-    private fun readPcm16(f: File): FloatArray {
-        val bytes = f.readBytes()
-        val out = FloatArray(bytes.size / 2)
-        for (i in out.indices) {
-            val lo = bytes[2 * i].toInt() and 0xff
-            val hi = bytes[2 * i + 1].toInt()
-            out[i] = ((hi shl 8) or lo).toShort() / 32768f
-        }
-        return out
     }
 
     companion object {

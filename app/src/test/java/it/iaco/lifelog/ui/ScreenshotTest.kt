@@ -116,8 +116,26 @@ class ScreenshotTest {
 
     @Test fun settings() = shot("4-impostazioni", tab = Tab.SETTINGS) {
         SettingsScreen(
-            SettingsUi(true, true, 37.5f, "Ora: batteria al 64%, 31,2 °C, non in carica.", true, "Salvato alle 16:20 (184 KB)", "0.1.10"),
+            SettingsUi(true, true, 37.5f, "Ora: batteria al 64%, 31,2 °C, non in carica.", true, "Salvato alle 16:20 (184 KB)", "0.1.10",
+                engines = listOf(
+                    EngineRow("PARAKEET", "Parakeet", "Veloce. Riconosce la lingua da solo.", "Pronto", selected = false, ready = true),
+                    EngineRow("WHISPER", "Whisper turbo", "Più preciso in italiano, circa 3 volte più lento. Scarica 564 MB.", "Whisper: download al 41%", selected = true, ready = false),
+                    EngineRow("GOOGLE", "Google sul telefono", "Il riconoscimento vocale di Google, offline.", "Se manca il pacchetto italiano offline, lo scarica Google da solo al primo uso.", selected = false, ready = true),
+                )),
             {}, {}, {}, {}, {}, {}, {}, {}
+        )
+    }
+
+    @Test fun compare() = shot("8-confronta", tab = null) {
+        CompareScreen(
+            CompareUi(false, "Fatto.", listOf(
+                CompareRow("Martedì 25, 16:42", listOf(
+                    "Parakeet, 1,2 s" to "allora ci vediamo giovedi pomeriggio in studio porto io le bozze",
+                    "Whisper turbo, 3,8 s" to "Allora ci vediamo giovedì pomeriggio in studio, porto io le bozze del progetto.",
+                    "Google sul telefono, 2,1 s" to "allora ci vediamo giovedì pomeriggio in studio porto io le bozze del progetto",
+                )),
+            )),
+            {}, {}
         )
     }
 

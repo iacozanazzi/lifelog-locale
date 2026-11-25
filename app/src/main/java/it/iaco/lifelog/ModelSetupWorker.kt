@@ -51,6 +51,20 @@ class ModelSetupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             if (!Models.vadReady(ctx)) {
                 download(Models.VAD_URL, Models.vadFile(ctx)) { }
             }
+            if (inputData.getBoolean(KEY_WHISPER, false)) {
+                if (!Models.whisperReady(ctx)) {
+                    val tar = File(ctx.cacheDir, "whisper.tar.bz2")
+                    var lastPct = -1
+                    download(Models.WHISPER_URL, tar) { pct ->
+                        if (pct != lastPct) { lastPct = pct; report("Whisper: download al $pct%", pct) }
+                    }
+                    report("Whisper: estrazione (qualche minuto)…", 100)
+                    extract(tar, Models.dir(ctx))
+                    Models.markWhisperComplete(ctx)
+                    tar.delete()
+                }
+                return@withContext Result.success()
+            }
             if (!Models.parakeetReady(ctx)) {
                 val tar = File(ctx.cacheDir, "parakeet.tar.bz2")
                 var lastPct = -1
@@ -150,6 +164,21 @@ class ModelSetupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_STAGE = "stage"
         const val KEY_PCT = "pct"
         const val KEY_ERROR = "error"
+        const val KEY_WHISPER = "whisper"
+        const val NAME_WHISPER = "model_setup_whisper"
+
+        fun startWhisper(ctx: Context, wifiOnly: Boolean) {
+            val req = OneTimeWorkRequestBuilder<ModelSetupWorker>()
+                .setInputData(workDataOf(KEY_WHISPER to true))
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                        .setRequiresStorageNotLow(true)
+                        .build()
+                )
+                .build()
+            WorkManager.getInstance(ctx).enqueueUniqueWork(NAME_WHISPER, ExistingWorkPolicy.KEEP, req)
+        }
 
         fun start(ctx: Context, wifiOnly: Boolean) {
             val req = OneTimeWorkRequestBuilder<ModelSetupWorker>()

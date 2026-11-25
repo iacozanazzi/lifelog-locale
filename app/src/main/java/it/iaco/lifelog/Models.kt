@@ -17,7 +17,37 @@ object Models {
     const val VAD_URL = "$BASE/silero_vad.onnx"
     const val PARAKEET_MB = 487
 
+    const val WHISPER_NAME = "sherpa-onnx-whisper-turbo"
+    const val WHISPER_URL = "$BASE/$WHISPER_NAME.tar.bz2"
+    const val WHISPER_MB = 564
+
     const val SAMPLE_RATE = 16000
+
+    fun whisperDir(ctx: Context) = File(dir(ctx), WHISPER_NAME)
+    fun whisperReady(ctx: Context) = File(whisperDir(ctx), ".complete").exists()
+    fun markWhisperComplete(ctx: Context) = File(whisperDir(ctx), ".complete").writeText("ok")
+
+    /** Whisper large-v3-turbo con lingua forzata all'italiano: più preciso, più lento. */
+    fun whisperConfig(ctx: Context, threads: Int): OfflineRecognizerConfig {
+        val d = whisperDir(ctx)
+        val files = d.listFiles().orEmpty()
+        fun find(suffix: String) = (files.firstOrNull { it.name.endsWith("$suffix.int8.onnx") }
+            ?: files.firstOrNull { it.name.endsWith("$suffix.onnx") } ?: error("File Whisper mancante: $suffix")).absolutePath
+        val tokens = files.firstOrNull { it.name.endsWith("tokens.txt") } ?: error("tokens Whisper mancante")
+        return OfflineRecognizerConfig(
+            modelConfig = OfflineModelConfig(
+                whisper = com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig(
+                    encoder = find("encoder"), decoder = find("decoder"),
+                    language = "it", task = "transcribe",
+                ),
+                tokens = tokens.absolutePath,
+                modelType = "whisper",
+                numThreads = threads,
+                provider = "cpu",
+            ),
+            decodingMethod = "greedy_search",
+        )
+    }
 
     fun dir(ctx: Context) = File(ctx.filesDir, "models").apply { mkdirs() }
     fun vadFile(ctx: Context) = File(dir(ctx), "silero_vad.onnx")

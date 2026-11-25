@@ -80,7 +80,15 @@ data class SettingsUi(
     val driveConfigured: Boolean,
     val driveStatus: String,
     val version: String,
+    val engines: List<EngineRow> = emptyList(),
 )
+
+/** Un motore di trascrizione nella lista delle impostazioni. */
+data class EngineRow(val key: String, val label: String, val detail: String, val state: String, val selected: Boolean, val ready: Boolean)
+
+data class CompareRow(val time: String, val results: List<Pair<String, String>>)
+
+data class CompareUi(val running: Boolean, val status: String, val rows: List<CompareRow>)
 
 enum class DownloadState { IDLE, WAITING_WIFI, RUNNING, FAILED, DONE }
 
@@ -370,10 +378,24 @@ fun SettingsScreen(
     onExportMd: () -> Unit,
     onExportJson: () -> Unit,
     onSetup: () -> Unit,
+    onEngine: (String) -> Unit = {},
+    onCompare: () -> Unit = {},
 ) {
     val c = Life.c
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 32.dp)) {
         item { ScreenHeader(null, "Impostazioni") }
+
+        if (s.engines.isNotEmpty()) {
+            item { Group("Motore di trascrizione") }
+            items(s.engines) { e ->
+                EngineRowView(e) { onEngine(e.key) }
+                Hairline()
+            }
+            item {
+                NavRow("Confronta i motori sulle ultime frasi", onClick = onCompare)
+                Hairline()
+            }
+        }
 
         item { Group("Google Drive") }
         item {
@@ -429,6 +451,53 @@ fun SettingsScreen(
                 style = Type.meta, color = c.second, modifier = Modifier.padding(top = 14.dp)
             )
             Text("Lifelog ${s.version}", style = Type.meta, color = c.faint, modifier = Modifier.padding(top = 10.dp))
+        }
+    }
+}
+
+@Composable
+private fun EngineRowView(e: EngineRow, onClick: () -> Unit) {
+    val c = Life.c
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(e.label, style = Type.rowTitle, color = c.text)
+            Text(e.detail, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 3.dp))
+            if (e.state.isNotBlank()) Text(e.state, style = Type.meta, color = if (e.ready) c.second else c.accent, modifier = Modifier.padding(top = 3.dp))
+        }
+        Box(
+            Modifier.padding(start = 16.dp).size(24.dp).clip(CircleShape)
+                .background(if (e.selected) c.accent else c.fill),
+            contentAlignment = Alignment.Center
+        ) { if (e.selected) Text("✓", style = Type.time, color = c.onText) }
+    }
+}
+
+// =============================================================== Confronta
+
+@Composable
+fun CompareScreen(s: CompareUi, onBack: () -> Unit, onRun: () -> Unit) {
+    val c = Life.c
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 8.dp, bottom = 40.dp)) {
+        item {
+            TextAction("‹ Impostazioni", onBack)
+            Text("Confronta", style = Type.largeTitle, color = c.text, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                "Le ultime frasi registrate, trascritte da ogni motore pronto. Scegli quello che sbaglia meno con la tua voce.",
+                style = Type.text, color = c.second, modifier = Modifier.padding(top = 8.dp)
+            )
+            if (s.status.isNotBlank()) Text(s.status, style = Type.meta, color = if (s.running) c.accent else c.second, modifier = Modifier.padding(top = 12.dp))
+            if (!s.running) SolidButton(if (s.rows.isEmpty()) "Avvia il confronto" else "Rifai il confronto", onRun, modifier = Modifier.padding(top = 16.dp))
+        }
+        items(s.rows) { r ->
+            Column(Modifier.padding(top = 28.dp)) {
+                Text(r.time, style = Type.section, color = c.text)
+                r.results.forEach { (engine, text) ->
+                    Text(engine, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 12.dp))
+                    Text(text.ifBlank { "(niente)" }, style = Type.text, color = c.text, modifier = Modifier.padding(top = 2.dp))
+                }
+                Spacer(Modifier.height(16.dp))
+                Hairline()
+            }
         }
     }
 }

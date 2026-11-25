@@ -132,6 +132,17 @@ class RecorderService : Service() {
         // Orologio: inizio della sessione in tempo reale, e campioni letti da allora.
         val sessionStartMs = System.currentTimeMillis()
         var samplesRead = 0L
+        // Ultimi 30 secondi di audio: servono per aggiungere un margine prima e dopo
+        // ogni pezzo di parlato, così l'inizio e la fine delle parole non vengono tagliati.
+        val ring = FloatArray(sr * 30)
+        val pad = sr / 4 // 0,25 s
+        fun padded(start: Long, len: Int): Pair<Long, FloatArray> {
+            val from = maxOf(start - pad, samplesRead - ring.size + 1, 0L)
+            val to = minOf(start + len + pad, samplesRead)
+            val out = FloatArray((to - from).toInt().coerceAtLeast(0))
+            for (i in out.indices) out[i] = ring[((from + i) % ring.size).toInt()]
+            return from to out
+        }
         var lastBeat = 0L
         var zeroRunSamples = 0L
         var silentMicWarned = false
@@ -152,6 +163,7 @@ class RecorderService : Service() {
                     if (s.toInt() != 0) allZero = false
                     floats[i] = s / 32768f
                 }
+                for (i in 0 until n) ring[((samplesRead + i) % ring.size).toInt()] = floats[i]
                 samplesRead += n
                 // Se il microfono restituisce zeri perfetti per più di un minuto,
                 // Android ce lo sta bloccando (es. dopo una ripartenza dallo sfondo).
@@ -178,9 +190,11 @@ class RecorderService : Service() {
                 while (!vad.empty()) {
                     val seg = vad.front()
                     vad.pop()
-                    val startMs = sessionStartMs + seg.start * 1000L / sr
-                    val endMs = startMs + seg.samples.size * 1000L / sr
-                    saveSegment(db, startMs, endMs, seg.samples)
+                    val (from, audio) = padded(seg.start.toLong(), seg.samples.size)
+                    val samples = if (audio.size >= seg.samples.size) audio else seg.samples
+                    val startMs = sessionStartMs + (if (audio.size >= seg.samples.size) from else seg.start.toLong()) * 1000L / sr
+                    val endMs = startMs + samples.size * 1000L / sr
+                    saveSegment(db, startMs, endMs, samples)
                     segmentsToday++
                 }
 
@@ -225,15 +239,7 @@ class RecorderService : Service() {
     private fun saveSegment(db: Db, startMs: Long, endMs: Long, samples: FloatArray) {
         val dir = File(filesDir, "pending").apply { mkdirs() }
         val f = File(dir, "$startMs.pcm")
-        DataOutputStream(BufferedOutputStream(FileOutputStream(f))).use { out ->
-            val bytes = ByteArray(samples.size * 2)
-            for (i in samples.indices) {
-                val v = (samples[i].coerceIn(-1f, 1f) * 32767f).toInt()
-                bytes[2 * i] = (v and 0xff).toByte()
-                bytes[2 * i + 1] = ((v shr 8) and 0xff).toByte()
-            }
-            out.write(bytes)
-        }
+        DataOutputStream(BufferedOutputStream(FileOutputStream(f))).use { it.write(Pcm.toBytes(samples)) }
         db.insertPending(startMs, endMs, f.absolutePath)
     }
 
