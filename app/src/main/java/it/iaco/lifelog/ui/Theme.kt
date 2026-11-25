@@ -13,116 +13,88 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import it.iaco.lifelog.R
 
-/** Carattere da titolo: Instrument Serif (licenza OFL). */
-val Serif = FontFamily(
-    Font(R.font.instrument_serif, FontWeight.Normal, FontStyle.Normal),
-    Font(R.font.instrument_serif_italic, FontWeight.Normal, FontStyle.Italic),
+/** Un solo carattere per tutta l'app: Schibsted Grotesk (licenza OFL). */
+val Grotesk = FontFamily(
+    Font(R.font.schibsted_400, FontWeight.Normal),
+    Font(R.font.schibsted_500, FontWeight.Medium),
+    Font(R.font.schibsted_700, FontWeight.Bold),
+    Font(R.font.schibsted_800, FontWeight.ExtraBold),
+    Font(R.font.schibsted_900, FontWeight.Black),
 )
 
-/** Colori "di senso" dell'app, oltre a quelli di Material. */
+/**
+ * Direzione "Parole": il contenuto sono le frasi che hai detto.
+ * Bianco (o nero vero), testo forte, un unico accento blu usato solo per
+ * stato e azioni. Niente decorazioni.
+ */
 @Immutable
-data class LifeColors(
-    val voice: Color,      // ambra: voce, ascolto, da trascrivere
-    val text: Color,       // menta: già trascritto
-    val gap: Color,        // corallo: buchi di registrazione, errori
-    val ink: Color,        // testo principale
-    val muted: Color,      // testo secondario
-    val track: Color,      // binari, separatori
-    val card: Color,
-    val cardHigh: Color,
-    val glow: Color,
+data class Ink(
+    val bg: Color,
+    val text: Color,
+    val second: Color,   // testo secondario
+    val faint: Color,    // frasi vecchie, separatori forti
+    val hair: Color,     // linee sottili
+    val fill: Color,     // campi e barra in basso
+    val accent: Color,
+    val onText: Color,   // testo sopra un pulsante pieno
 )
 
-private val DarkLife = LifeColors(
-    voice = Color(0xFFF4B860),
-    text = Color(0xFF7FD6C2),
-    gap = Color(0xFFFF7A6B),
-    ink = Color(0xFFEDEAE3),
-    muted = Color(0xFF9A9AA6),
-    track = Color(0xFF262A33),
-    card = Color(0xFF15171D),
-    cardHigh = Color(0xFF1C1F27),
-    glow = Color(0xFFFF9F43),
+private val LightInk = Ink(
+    bg = Color(0xFFFFFFFF), text = Color(0xFF111111), second = Color(0xFF85858B),
+    faint = Color(0xFFC7C7CC), hair = Color(0xFFEBEBEF), fill = Color(0xFFF2F2F6),
+    accent = Color(0xFF2B35E8), onText = Color.White,
 )
 
-private val LightLife = LifeColors(
-    voice = Color(0xFFC27A0E),
-    text = Color(0xFF1E8C77),
-    gap = Color(0xFFD2483A),
-    ink = Color(0xFF1B1A1F),
-    muted = Color(0xFF6E6C75),
-    track = Color(0xFFE6E0D4),
-    card = Color(0xFFFFFFFF),
-    cardHigh = Color(0xFFFBF7F0),
-    glow = Color(0xFFF4A340),
+private val DarkInk = Ink(
+    bg = Color(0xFF000000), text = Color(0xFFF5F5F7), second = Color(0xFF8E8E93),
+    faint = Color(0xFF4A4A4E), hair = Color(0xFF242426), fill = Color(0xFF1C1C1E),
+    accent = Color(0xFF7C84FF), onText = Color.Black,
 )
 
-val LocalLife = staticCompositionLocalOf { DarkLife }
+val LocalInk = staticCompositionLocalOf { LightInk }
 
 object Life {
-    val c: LifeColors @Composable get() = LocalLife.current
+    val c: Ink @Composable get() = LocalInk.current
 }
 
-private val base = Typography()
-private val AppTypography = Typography(
-    displayLarge = TextStyle(fontFamily = Serif, fontSize = 64.sp, lineHeight = 64.sp, letterSpacing = (-0.02).em),
-    displayMedium = TextStyle(fontFamily = Serif, fontSize = 48.sp, lineHeight = 50.sp, letterSpacing = (-0.01).em),
-    displaySmall = TextStyle(fontFamily = Serif, fontSize = 36.sp, lineHeight = 40.sp),
-    headlineLarge = TextStyle(fontFamily = Serif, fontSize = 32.sp, lineHeight = 36.sp),
-    headlineMedium = TextStyle(fontFamily = Serif, fontSize = 28.sp, lineHeight = 32.sp),
-    headlineSmall = TextStyle(fontFamily = Serif, fontSize = 24.sp, lineHeight = 28.sp),
-    titleLarge = base.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-    titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-    bodyLarge = base.bodyLarge.copy(lineHeight = 26.sp),
-    bodyMedium = base.bodyMedium.copy(lineHeight = 22.sp),
-    labelSmall = base.labelSmall.copy(letterSpacing = 0.12.em, fontWeight = FontWeight.SemiBold),
-)
+/** Scala tipografica: pochi passi, ben distinti. */
+object Type {
+    val largeTitle = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Black, fontSize = 40.sp, lineHeight = 42.sp, letterSpacing = (-0.02).em)
+    val lyric = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.ExtraBold, fontSize = 30.sp, lineHeight = 35.sp, letterSpacing = (-0.015).em)
+    val section = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, lineHeight = 27.sp, letterSpacing = (-0.01).em)
+    val rowTitle = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Bold, fontSize = 18.sp, lineHeight = 23.sp)
+    val body = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Medium, fontSize = 19.sp, lineHeight = 26.sp)
+    val text = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 22.sp)
+    val meta = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 20.sp)
+    val time = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 17.sp)
+    val tab = TextStyle(fontFamily = Grotesk, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 16.sp)
+}
 
 @Composable
 fun LifeTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    val life = if (dark) DarkLife else LightLife
-    val scheme = if (dark) darkColorScheme(
-        primary = life.voice,
-        onPrimary = Color(0xFF241500),
-        secondary = life.text,
-        onSecondary = Color(0xFF00201A),
-        error = life.gap,
-        background = Color(0xFF0B0C10),
-        onBackground = life.ink,
-        surface = Color(0xFF0B0C10),
-        onSurface = life.ink,
-        surfaceVariant = life.cardHigh,
-        onSurfaceVariant = life.muted,
-        outline = life.track,
-        outlineVariant = life.track,
-        surfaceContainer = life.card,
-        surfaceContainerHigh = life.cardHigh,
-        surfaceContainerHighest = Color(0xFF242833),
-    ) else lightColorScheme(
-        primary = life.voice,
-        onPrimary = Color.White,
-        secondary = life.text,
-        onSecondary = Color.White,
-        error = life.gap,
-        background = Color(0xFFF6F2EA),
-        onBackground = life.ink,
-        surface = Color(0xFFF6F2EA),
-        onSurface = life.ink,
-        surfaceVariant = life.cardHigh,
-        onSurfaceVariant = life.muted,
-        outline = life.track,
-        outlineVariant = life.track,
-        surfaceContainer = life.card,
-        surfaceContainerHigh = life.cardHigh,
-        surfaceContainerHighest = Color(0xFFEFE9DE),
+    val ink = if (dark) DarkInk else LightInk
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    val scheme = base.copy(
+        primary = ink.accent, onPrimary = ink.onText,
+        background = ink.bg, onBackground = ink.text,
+        surface = ink.bg, onSurface = ink.text,
+        surfaceVariant = ink.fill, onSurfaceVariant = ink.second,
+        outline = ink.hair, outlineVariant = ink.hair,
     )
-    CompositionLocalProvider(LocalLife provides life) {
-        MaterialTheme(colorScheme = scheme, typography = AppTypography, content = content)
+    val t = Typography().let { d ->
+        Typography(
+            bodyLarge = d.bodyLarge.copy(fontFamily = Grotesk),
+            bodyMedium = d.bodyMedium.copy(fontFamily = Grotesk),
+            bodySmall = d.bodySmall.copy(fontFamily = Grotesk),
+            labelLarge = d.labelLarge.copy(fontFamily = Grotesk),
+        )
+    }
+    CompositionLocalProvider(LocalInk provides ink) {
+        MaterialTheme(colorScheme = scheme, typography = t, content = content)
     }
 }

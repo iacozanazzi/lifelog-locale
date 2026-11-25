@@ -100,12 +100,11 @@ fun App(resumeTick: Int) {
                             route = Route.Main
                         }
                         is Route.Day -> DayRoute(r.day, tick) { route = Route.Main }
-                        Route.Main -> AnimatedContent(tab, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "tab") { t ->
-                            when (t) {
-                                Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
-                                Tab.ARCHIVE -> ArchiveRoute(tick, onDay = { route = Route.Day(it) })
-                                Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup })
-                            }
+                        Route.Main -> when (tab) {
+                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
+                            Tab.DAYS -> DaysRoute(tick, onDay = { route = Route.Day(it) })
+                            Tab.SEARCH -> SearchRoute(onDay = { route = Route.Day(it) })
+                            Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup })
                         }
                     }
                 }
@@ -158,12 +157,16 @@ private fun momentsOf(segs: List<Segment>, gaps: List<Gap>): List<Pair<Long, Mom
     } + gaps.map {
         it.startMs to Moment(
             "${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}",
-            "Non registrato per ${(it.endMs - it.startMs) / 60_000} minuti (${it.reason})",
+            "non registrato (${(it.endMs - it.startMs) / 60_000} min). Il sistema ha chiuso l'app.",
             gap = true
         )
     }
 
 // =============================================================== Oggi
+
+/** Divide i paragrafi in frasi, per mostrarle una per riga come un testo che scorre. */
+private fun sentences(text: String): List<String> =
+    text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.length > 1 }
 
 @Composable
 private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) {
@@ -179,33 +182,29 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
         base = withContext(Dispatchers.IO) {
             val today = Db.today()
             val segs = db.segmentsOfDay(today)
-            val gaps = db.gapsOfDay(today)
             val wanted = prefs.recordingWanted
             val stalled = Watchdog.isStalled(ctx)
             val alive = RecorderService.isAlive(ctx)
-            val b = Throttle.battery(ctx)
             val pending = db.pendingCount()
+            val paras = Exporter.paragraphs(segs)
+            val lines = paras.flatMap { sentences(it.text) }.takeLast(5)
             TodayUi(
-                dateLabel = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)),
+                dateLabel = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() },
                 ready = Models.vadReady(ctx) && hasMic(ctx),
-                mode = when {
-                    stalled -> OrbMode.STALLED
-                    wanted && alive -> OrbMode.LISTENING
-                    else -> OrbMode.OFF
+                state = when {
+                    stalled -> RecState.STALLED
+                    wanted && alive -> RecState.LISTENING
+                    else -> RecState.OFF
                 },
-                wanted = wanted,
                 stalledSince = if (stalled) Notifications.hhmm(prefs.lastHeartbeat) else null,
                 level = 0f, speaking = false,
                 speechMinutes = segs.sumOf { it.endMs - it.startMs } / 60_000,
-                words = wordsOf(segs),
                 pending = pending,
                 pendingMinutes = db.pendingSeconds() / 60,
-                batteryLine = "Batteria %d%% · %.1f °C · %s".format(b.percent, b.tempC, if (b.plugged) "in carica" else "non in carica"),
                 transcribeStatus = prefs.transcribeStatus,
                 canTranscribeNow = pending > 0 && Models.parakeetReady(ctx),
-                spans = spansOf(segs, gaps),
-                nowMin = minuteOfDay(System.currentTimeMillis()),
-                latest = momentsOf(segs, gaps).sortedByDescending { it.first }.take(3).map { it.second },
+                lines = lines,
+                lastTime = paras.lastOrNull()?.let { Notifications.hhmm(it.endMs) },
                 crash = null,
             )
         }
@@ -213,81 +212,115 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
     val s = base ?: return
     TodayScreen(
         s.copy(level = level, speaking = speaking, crash = crash),
-        onStart = {
+        onToggle = {
             try {
-                RecorderService.start(ctx)
+                if (s.state == RecState.LISTENING) RecorderService.stop(ctx) else RecorderService.start(ctx)
             } catch (e: Exception) {
                 Toast.makeText(ctx, "Non riesco ad avviare: ${e.message}", Toast.LENGTH_LONG).show()
             }
         },
-        onStop = { RecorderService.stop(ctx) },
         onSetup = onSetup,
         onOpenToday = { onDay(Db.today()) },
         onTranscribeNow = {
             TranscribeWorker.runNow(ctx)
-            Toast.makeText(ctx, "Avviata. Si ferma da sola se la batteria si scalda.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "Trascrizione avviata. Si ferma se la batteria si scalda.", Toast.LENGTH_SHORT).show()
         },
-        onShareCrash = {
-            val send = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, crash)
-            }
-            ctx.startActivity(Intent.createChooser(send, "Condividi errore"))
-        },
+        onShareCrash = { shareText(ctx, crash.orEmpty(), "Condividi l'errore") },
         onDismissCrash = { CrashLog.clear(ctx); crash = null },
     )
 }
 
-// =============================================================== Archivio
+private fun shareText(ctx: Context, text: String, title: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    ctx.startActivity(Intent.createChooser(send, title))
+}
+
+private fun durationLabel(ms: Long): String {
+    val m = ms / 60_000
+    return if (m < 60) "$m min" else "${m / 60} h ${m % 60} min"
+}
+
+// =============================================================== Giorni
 
 @Composable
-private fun ArchiveRoute(tick: Int, onDay: (String) -> Unit) {
+private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
-    var query by remember { mutableStateOf("") }
     var days by remember { mutableStateOf(emptyList<DayRow>()) }
-    var results by remember { mutableStateOf(emptyList<Pair<String, Moment>>()) }
     LaunchedEffect(tick) {
         days = withContext(Dispatchers.IO) {
-            db.days().take(90).map { d ->
-                val segs = db.segmentsOfDay(d.day)
+            db.days().take(120).map { d ->
                 DayRow(
-                    day = d.day, title = dayTitle(d.day), subtitle = daySubtitle(d.day),
-                    speechMinutes = d.speechMs / 60_000, words = wordsOf(segs), pending = d.pending,
-                    spans = spansOf(segs, db.gapsOfDay(d.day)),
+                    day = d.day, title = dayTitle(d.day),
+                    meta = durationLabel(d.speechMs),
+                    spans = spansOf(db.segmentsOfDay(d.day), db.gapsOfDay(d.day)),
                 )
             }
         }
     }
+    DaysScreen(days, onDay)
+}
+
+// =============================================================== Cerca
+
+@Composable
+private fun SearchRoute(onDay: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val db = remember { Db.get(ctx) }
+    var query by remember { mutableStateOf("") }
+    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
     LaunchedEffect(query) {
         val q = query.trim()
-        results = if (q.length < 2) emptyList() else withContext(Dispatchers.IO) {
-            db.search(q).map { Db.dayOf(it.startMs) to Moment(Notifications.hhmm(it.startMs), it.text.orEmpty()) }
+        if (q.length >= 2) delay(250)
+        hits = if (q.length < 2) emptyList() else withContext(Dispatchers.IO) {
+            db.search(q).map {
+                val day = Db.dayOf(it.startMs)
+                SearchHit(day, "${dayTitle(day)}, ${Notifications.hhmm(it.startMs)}", it.text.orEmpty())
+            }
         }
     }
-    ArchiveScreen(days, query, results, onQuery = { query = it }, onDay = onDay)
+    SearchScreen(query, hits, onQuery = { query = it }, onDay = onDay)
 }
 
 // =============================================================== Giorno
+
+private fun partOfDay(ms: Long): String {
+    val h = Instant.ofEpochMilli(ms).atZone(zone).hour
+    return when (h) {
+        in 5..11 -> "Mattina"
+        in 12..17 -> "Pomeriggio"
+        in 18..22 -> "Sera"
+        else -> "Notte"
+    }
+}
 
 @Composable
 private fun DayRoute(day: String, tick: Int, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var ui by remember { mutableStateOf<DayUi?>(null) }
+    var plain by remember { mutableStateOf("") }
     LaunchedEffect(day, tick) {
-        ui = withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             val segs = db.segmentsOfDay(day)
             val gaps = db.gapsOfDay(day)
-            DayUi(
-                title = dayTitle(day), subtitle = daySubtitle(day),
+            val words = wordsOf(segs)
+            val all = momentsOf(segs, gaps).sortedBy { it.first }
+            val sections = all.groupBy { partOfDay(it.first) }.map { (k, v) -> k to v.map { it.second } }
+            ui = DayUi(
+                title = dayTitle(day),
+                subtitle = "${daySubtitle(day)}. ${durationLabel(segs.sumOf { it.endMs - it.startMs })} di voce, ${"%,d".format(ITA, words)} parole",
                 spans = spansOf(segs, gaps),
-                moments = momentsOf(segs, gaps).sortedBy { it.first }.map { it.second },
+                sections = sections,
                 pending = segs.count { it.text == null },
             )
+            plain = "Lifelog, ${daySubtitle(day)}\n\n" + all.filter { !it.second.gap }.joinToString("\n\n") { "${it.second.time}\n${it.second.text}" }
         }
     }
-    ui?.let { DayScreen(it, onBack) }
+    ui?.let { DayScreen(it, onBack, onShare = { shareText(ctx, plain, "Condividi la giornata") }) }
 }
 
 // =============================================================== Impostazioni
@@ -303,6 +336,9 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit) {
             onlyCharging = prefs.onlyWhileCharging,
             waitCharge = prefs.minChargePercent > 0,
             maxTemp = prefs.maxBatteryTemp,
+            battery = Throttle.battery(ctx).let { b ->
+                "Ora: batteria al %d%%, %.1f °C, %s.".format(b.percent, b.tempC, if (b.plugged) "in carica" else "non in carica")
+            },
             driveConfigured = DriveSync.isConfigured(ctx),
             driveStatus = prefs.driveStatus,
             version = try {

@@ -57,7 +57,7 @@ class ModelSetupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 download(Models.PARAKEET_URL, tar) { pct ->
                     if (pct != lastPct) {
                         lastPct = pct
-                        report("Download $pct%", pct)
+                        report("Download al $pct%", pct)
                     }
                 }
                 report("Estrazione (qualche minuto)…", 100)
