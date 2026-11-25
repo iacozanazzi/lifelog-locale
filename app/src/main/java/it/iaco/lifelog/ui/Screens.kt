@@ -65,6 +65,8 @@ data class TodayUi(
     val crash: String?,
     /** Il riassunto di ieri fatto da Claude, mostrato in cima la mattina. */
     val brief: Brief? = null,
+    /** Agenda di oggi, scadenze, preparazione per domani, date proposte e bozze (BriefingScreens.kt). */
+    val briefing: BriefingUi? = null,
     /** Promemoria sulle persone (thread Persone): chi vedi oggi, compleanni, chi non senti da tempo. */
     val people: List<PeopleTodayRow> = emptyList(),
 )
@@ -139,6 +141,7 @@ fun TodayScreen(
     onSettings: () -> Unit = {},
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     onOpenYesterday: () -> Unit = {},
+    briefingActions: BriefingActions = BriefingActions(),
     onPerson: (String) -> Unit = {},
 ) {
     val c = Life.c
@@ -154,12 +157,15 @@ fun TodayScreen(
                 }
             }
 
-            s.brief?.let { b ->
+            val top = s.briefing?.takeIf { it.hasTop }
+            if (s.brief != null || top != null) {
                 item {
                     Column(
                         Modifier.padding(top = 18.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill)
-                            .clickable(onClick = onOpenYesterday).padding(18.dp)
+                            .then(if (top == null) Modifier.clickable(onClick = onOpenYesterday) else Modifier).padding(18.dp)
                     ) {
+                        top?.let { BriefingTop(it, briefingActions, hasYesterday = s.brief != null) }
+                        val b = s.brief ?: return@Column
                         Text("Da ieri", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text)
                         Text(b.text, style = Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp), color = c.text, modifier = Modifier.padding(top = 6.dp))
                         b.todos.forEach { t ->
@@ -176,11 +182,13 @@ fun TodayScreen(
                         }
                         Text(
                             if (b.more > 0) "Leggi la giornata e altri ${b.more} impegni" else "Leggi la giornata",
-                            style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.padding(top = 14.dp)
+                            style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent,
+                            modifier = Modifier.padding(top = 14.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpenYesterday)
                         )
                     }
                 }
             }
+            briefingCards(s.briefing, briefingActions)
 
             if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
 

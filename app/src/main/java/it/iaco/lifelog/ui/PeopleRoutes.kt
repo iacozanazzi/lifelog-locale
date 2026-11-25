@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import it.iaco.lifelog.Db
+import it.iaco.lifelog.briefing.Briefing
 import it.iaco.lifelog.data.Assistant
 import it.iaco.lifelog.people.People
 import it.iaco.lifelog.people.Speakers
@@ -217,5 +218,11 @@ fun VoiceRoute(voiceId: String, onBack: () -> Unit) {
 
 /** Righe per la scheda Persone in Oggi (vuota se non c'è niente da dire). */
 fun peopleToday(ctx: Context): List<PeopleTodayRow> = runCatching {
-    People.reminders(ctx).take(4).map { PeopleTodayRow(it.slug, it.name, it.text, it.detail) }
+    // Chi vedi oggi lo mostra già il briefing (con la preparazione): qui non lo ripeto.
+    val inBriefing = runCatching {
+        Briefing.load(ctx)?.today.orEmpty().flatMap { m -> m.people.map { p -> p.slug } }.toSet()
+    }.getOrDefault(emptySet())
+    People.reminders(ctx)
+        .filterNot { r -> r.slug in inBriefing && r.text.contains(" vedi ") }
+        .take(4).map { PeopleTodayRow(it.slug, it.name, it.text, it.detail) }
 }.getOrDefault(emptyList())

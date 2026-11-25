@@ -265,9 +265,15 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             )
         }
     }
+    // Briefing (BriefingRoutes.kt): calendario e file di Claude, ricalcolati ogni minuto o dopo una scelta.
+    var briefingBump by remember { mutableIntStateOf(0) }
+    var briefing by remember { mutableStateOf<BriefingUi?>(null) }
+    LaunchedEffect(briefingBump, tick / 30) { briefing = withContext(Dispatchers.IO) { runCatching { briefingOf(ctx) }.getOrNull() } }
+    val briefingActions = rememberBriefingActions(onPerson) { briefingBump++ }
     val s = base ?: return
     TodayScreen(
-        s.copy(level = level, speaking = speaking, crash = crash, people = peopleRows),
+        s.copy(level = level, speaking = speaking, crash = crash, briefing = briefing, people = peopleRows),
+        briefingActions = briefingActions,
         onToggle = {
             try {
                 if (s.state == RecState.LISTENING) RecorderService.stop(ctx) else RecorderService.start(ctx)
