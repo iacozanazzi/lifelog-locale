@@ -47,13 +47,15 @@ jobs:
             screens/*.png
 
       - name: Pubblica come Release (download diretto dal telefono)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Lifelog v${{ github.run_number }}
-          body: "APK da installare sul telefono. Istruzioni nel README."
-          files: |
-            out/*.apk
-            screens/*.png
-          fail_on_unmatched_files: false
-          make_latest: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Prima l'APK da solo (crea la release), poi le anteprime una per volta:
+          # caricarle tutte insieme in parallelo faceva fallire il passaggio.
+          gh release create "v${{ github.run_number }}" out/*.apk \
+            --title "Lifelog v${{ github.run_number }}" \
+            --notes "APK da installare sul telefono. Istruzioni nel README." --latest
+          for f in screens/*.png; do
+            [ -f "$f" ] || continue
+            for i in 1 2 3; do gh release upload "v${{ github.run_number }}" "$f" --clobber && break; sleep 5; done
+          done
