@@ -1,7 +1,9 @@
 package it.iaco.lifelog.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,11 +63,15 @@ data class TodayUi(
     val lines: List<String>,
     val lastTime: String?,
     val crash: String?,
+    /** Il riassunto di ieri fatto da Claude, mostrato in cima la mattina. */
+    val brief: Brief? = null,
 )
+
+data class Brief(val text: String, val todos: List<TodoItem>, val more: Int = 0)
 
 data class Moment(val time: String, val text: String, val gap: Boolean = false)
 
-data class DayRow(val day: String, val title: String, val meta: String, val spans: List<Span>)
+data class DayRow(val day: String, val title: String, val meta: String, val spans: List<Span>, val summary: String = "", val badge: String = "")
 
 data class DayUi(
     val title: String,
@@ -73,6 +79,10 @@ data class DayUi(
     val spans: List<Span>,
     val sections: List<Pair<String, List<Moment>>>,
     val pending: Int,
+    /** Racconto di Claude per questo giorno, se c'è. */
+    val story: YesterdayUi? = null,
+    val people: List<String> = emptyList(),
+    val todos: List<TodoItem> = emptyList(),
 )
 
 data class SearchHit(val day: String, val where: String, val text: String)
@@ -123,6 +133,9 @@ fun TodayScreen(
     onTranscribeNow: () -> Unit,
     onShareCrash: () -> Unit,
     onDismissCrash: () -> Unit,
+    onSettings: () -> Unit = {},
+    onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
+    onOpenYesterday: () -> Unit = {},
 ) {
     val c = Life.c
     Column(Modifier.fillMaxSize()) {
@@ -131,11 +144,38 @@ fun TodayScreen(
             contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp),
         ) {
             item {
-                ScreenHeader(s.dateLabel, "Oggi")
-                if (s.speechMinutes > 0) Text(
-                    "${durationText(s.speechMinutes)} di voce registrata",
-                    style = Type.meta, color = c.second, modifier = Modifier.padding(top = 6.dp)
-                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    ScreenHeader(s.dateLabel, "Oggi", Modifier.weight(1f))
+                    RoundIcon(onSettings, Modifier.padding(bottom = 8.dp))
+                }
+            }
+
+            s.brief?.let { b ->
+                item {
+                    Column(
+                        Modifier.padding(top = 18.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill)
+                            .clickable(onClick = onOpenYesterday).padding(18.dp)
+                    ) {
+                        Text("Da ieri", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text)
+                        Text(b.text, style = Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp), color = c.text, modifier = Modifier.padding(top = 6.dp))
+                        b.todos.forEach { t ->
+                            Row(
+                                Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onToggleTodo(t.id, !t.done) },
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Check(t.done, onCard = true)
+                                Text(
+                                    t.text, style = Type.text.copy(textDecoration = if (t.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null),
+                                    color = if (t.done) c.faint else c.text, modifier = Modifier.padding(start = 12.dp, top = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            if (b.more > 0) "Leggi la giornata e altri ${b.more} impegni" else "Leggi la giornata",
+                            style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.padding(top = 14.dp)
+                        )
+                    }
+                }
             }
 
             s.crash?.let {
@@ -157,7 +197,12 @@ fun TodayScreen(
                 }
             }
 
-            item { Spacer(Modifier.height(28.dp)) }
+            item {
+                Text(
+                    if (s.speechMinutes > 0) "Adesso, ${durationText(s.speechMinutes)} di voce" else "Adesso",
+                    style = Type.meta, color = c.second, modifier = Modifier.padding(top = 26.dp, bottom = 10.dp)
+                )
+            }
 
             if (s.lines.isEmpty()) {
                 item {
@@ -239,6 +284,44 @@ fun TodayScreen(
     }
 }
 
+/** Cerchio di spunta, condiviso da impegni e riassunto. */
+@Composable
+fun Check(done: Boolean, onCard: Boolean = false) {
+    val c = Life.c
+    Box(
+        Modifier.size(24.dp).clip(CircleShape)
+            .background(if (done) c.accent else if (onCard) c.bg else c.fill)
+            .then(if (!done && onCard) Modifier.border(1.5.dp, c.faint, CircleShape) else Modifier),
+        contentAlignment = Alignment.Center
+    ) { if (done) Text("✓", style = Type.time, color = c.onText) }
+}
+
+/** Pulsante tondo in alto a destra per le Opzioni. */
+@Composable
+private fun RoundIcon(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = Life.c
+    Box(
+        modifier.size(38.dp).clip(CircleShape).background(c.fill).clickable(onClick = onClick)
+            .semantics { contentDescription = "Opzioni" },
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Image(
+            androidx.compose.ui.res.painterResource(it.iaco.lifelog.R.drawable.ic_tab_settings), null,
+            Modifier.size(20.dp), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(c.text)
+        )
+    }
+}
+
+/** Etichetta tonda (persone, filtri). */
+@Composable
+fun Chip(label: String, selected: Boolean = false, onClick: () -> Unit = {}) {
+    val c = Life.c
+    Box(
+        Modifier.clip(RoundedCornerShape(50)).background(if (selected) c.text else c.fill).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) { Text(label, style = Type.meta.copy(fontWeight = FontWeight.Bold), color = if (selected) c.bg else c.text) }
+}
+
 private fun durationText(m: Long) = if (m < 60) "$m min" else "${m / 60} h ${m % 60} min"
 
 /** Tre barre che si muovono con la voce, come l'indicatore "in riproduzione". */
@@ -283,68 +366,88 @@ private fun PlayPause(listening: Boolean, onClick: () -> Unit) {
 // =============================================================== Giorni
 
 @Composable
-fun DaysScreen(
-    days: List<DayRow>,
+fun DaysScreen(days: List<DayRow>, onDay: (String) -> Unit) {
+    val c = Life.c
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp)) {
+        item { ScreenHeader(null, "Diario"); Spacer(Modifier.height(8.dp)) }
+        if (days.isEmpty()) item {
+            Text("Ancora nessun giorno registrato. Premi play in Oggi.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 12.dp))
+        }
+        items(days, key = { it.day }) { d ->
+            Column(Modifier.fillMaxWidth().clickable { onDay(d.day) }.padding(vertical = 16.dp)) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(d.title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
+                    Text(d.meta, style = Type.meta, color = c.second)
+                }
+                if (d.summary.isNotBlank()) Text(d.summary, style = Type.text, color = c.text, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                if (d.badge.isNotBlank()) Text(d.badge, style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.padding(top = 4.dp))
+                Spacer(Modifier.height(12.dp))
+                DayLine(d.spans, height = 6.dp)
+            }
+            Hairline()
+        }
+    }
+}
+
+@Composable
+fun SearchScreen(
+    query: String,
+    hits: List<SearchHit>,
+    onQuery: (String) -> Unit,
     onDay: (String) -> Unit,
-    query: String = "",
-    hits: List<SearchHit> = emptyList(),
-    onQuery: (String) -> Unit = {},
+    people: List<String> = emptyList(),
 ) {
     val c = Life.c
     val searching = query.trim().length >= 2
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp)) {
         item {
-            ScreenHeader(null, "Giorni")
+            ScreenHeader(null, "Cerca")
             Spacer(Modifier.height(14.dp))
-            Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fill)
-                    .padding(horizontal = 14.dp, vertical = 13.dp)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fill).padding(horizontal = 14.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (query.isEmpty()) Text("Cerca parole, nomi, idee", style = Type.text.copy(fontWeight = FontWeight.Medium), color = c.second)
-                BasicTextField(
-                    value = query, onValueChange = onQuery, singleLine = true,
-                    textStyle = Type.text.copy(color = c.text, fontWeight = FontWeight.Medium),
-                    cursorBrush = SolidColor(c.accent), modifier = Modifier.fillMaxWidth()
-                )
+                Box(Modifier.weight(1f)) {
+                    if (query.isEmpty()) Text("Parole, nomi, posti", style = Type.text.copy(fontWeight = FontWeight.Medium), color = c.second)
+                    BasicTextField(
+                        value = query, onValueChange = onQuery, singleLine = true,
+                        textStyle = Type.text.copy(color = c.text, fontWeight = FontWeight.Medium),
+                        cursorBrush = SolidColor(c.accent), modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (query.isNotEmpty()) Text("Annulla", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.padding(start = 10.dp).clickable { onQuery("") })
             }
             Spacer(Modifier.height(10.dp))
-            if (searching) Text(
-                when (hits.size) { 0 -> "Nessuna frase con \"${query.trim()}\"."; 1 -> "1 frase"; else -> "${hits.size} frasi" },
-                style = Type.meta, color = c.second
-            )
+            when {
+                searching -> Text(
+                    when (hits.size) { 0 -> "Nessuna frase con \"${query.trim()}\"."; 1 -> "1 frase"; else -> "${hits.size} frasi" },
+                    style = Type.meta, color = c.second
+                )
+                people.isNotEmpty() -> {
+                    Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 18.dp, bottom = 10.dp))
+                    FlowChips(people) { onQuery(it) }
+                }
+                else -> Text("Cerca in tutto quello che hai detto.", style = Type.meta, color = c.second)
+            }
         }
-        if (searching) {
-            items(hits) { h ->
-                Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {
-                    Text(h.where, style = Type.time, color = c.second)
-                    Spacer(Modifier.height(3.dp))
-                    Text(highlight(h.text, query.trim(), c.accent), style = Type.body, color = c.text, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                }
-                Hairline()
+        if (searching) items(hits) { h ->
+            Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {
+                Text(h.where, style = Type.time, color = c.second)
+                Spacer(Modifier.height(3.dp))
+                Text(highlight(h.text, query.trim(), c.accent), style = Type.body, color = c.text, maxLines = 4, overflow = TextOverflow.Ellipsis)
             }
-        } else {
-            if (days.isEmpty()) item {
-                Text("Ancora nessun giorno registrato. Avvia l'ascolto da Oggi.", style = Type.body, color = c.second)
-            }
-            items(days, key = { it.day }) { d ->
-                Column(Modifier.fillMaxWidth().clickable { onDay(d.day) }.padding(vertical = 16.dp)) {
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text(d.title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
-                        Text(d.meta, style = Type.meta, color = c.second)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    DayLine(d.spans, height = 6.dp)
-                }
-                Hairline()
-            }
+            Hairline()
         }
     }
 }
 
-/** Ricerca a schermo intero (ora integrata in Giorni). */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun SearchScreen(query: String, hits: List<SearchHit>, onQuery: (String) -> Unit, onDay: (String) -> Unit) =
-    DaysScreen(emptyList(), onDay, query, hits, onQuery)
+fun FlowChips(labels: List<String>, selected: String? = null, onClick: (String) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) { labels.forEach { l -> Chip(l, l == selected) { onClick(l) } } }
+}
 
 // =============================================================== Ieri
 
@@ -424,13 +527,21 @@ private fun EntryRow(e: Entry, color: Color) {
 
 // =============================================================== Impegni
 
-data class TodoItem(val id: String, val text: String, val meta: String, val done: Boolean, val age: String = "")
+data class TodoItem(val id: String, val text: String, val meta: String, val done: Boolean, val age: String = "", val person: String = "")
 
-data class TodoUi(val configured: Boolean, val mine: List<TodoItem>, val theirs: List<TodoItem>, val note: String)
+data class TodoUi(
+    val configured: Boolean,
+    val mine: List<TodoItem>,
+    val theirs: List<TodoItem>,
+    val note: String,
+    val people: List<String> = emptyList(),
+)
 
 @Composable
 fun TodoScreen(s: TodoUi, onToggle: (String, Boolean) -> Unit, onSetup: () -> Unit) {
     val c = Life.c
+    var who by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    fun keep(t: TodoItem) = who == null || t.person == who
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 40.dp)) {
         item { ScreenHeader(null, "Impegni") }
         if (!s.configured) item {
@@ -438,7 +549,13 @@ fun TodoScreen(s: TodoUi, onToggle: (String, Boolean) -> Unit, onSetup: () -> Un
             TextAction("Collega in Opzioni", onSetup, modifier = Modifier.padding(top = 12.dp))
         } else {
             if (s.note.isNotBlank()) item { Text(s.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 6.dp)) }
-            listOf("Devo io" to s.mine, "Mi devono" to s.theirs).forEach { (title, list) ->
+            if (s.people.isNotEmpty()) item {
+                Row(Modifier.padding(top = 14.dp).horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Tutti", who == null) { who = null }
+                    s.people.forEach { p -> Chip(p, who == p) { who = if (who == p) null else p } }
+                }
+            }
+            listOf("Devo io" to s.mine.filter(::keep), "Mi devono" to s.theirs.filter(::keep)).forEach { (title, list) ->
                 item {
                     Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
                         Text(title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
@@ -460,11 +577,7 @@ fun TodoScreen(s: TodoUi, onToggle: (String, Boolean) -> Unit, onSetup: () -> Un
 private fun TodoRow(t: TodoItem, onClick: () -> Unit) {
     val c = Life.c
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp)) {
-        Box(
-            Modifier.padding(top = 1.dp, end = 14.dp).size(24.dp).clip(CircleShape)
-                .background(if (t.done) c.accent else c.fill),
-            contentAlignment = Alignment.Center
-        ) { if (t.done) Text("✓", style = Type.time, color = c.onText) }
+        Box(Modifier.padding(top = 1.dp, end = 14.dp)) { Check(t.done) }
         Column(Modifier.weight(1f)) {
             Text(
                 t.text, style = Type.text.copy(textDecoration = if (t.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null),
@@ -493,41 +606,93 @@ private fun highlight(text: String, q: String, color: Color) = buildAnnotatedStr
 // =============================================================== Giorno
 
 @Composable
-fun DayScreen(s: DayUi, onBack: () -> Unit, onShare: () -> Unit) {
+fun DayScreen(
+    s: DayUi,
+    onBack: () -> Unit,
+    onShare: () -> Unit,
+    onPerson: (String) -> Unit = {},
+    onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
+    startOnStory: Boolean = true,
+) {
     val c = Life.c
+    var story by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(startOnStory && s.story != null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 8.dp, bottom = 40.dp)) {
         item {
-            TextAction("‹ Giorni", onBack)
-            Text(s.title, style = Type.largeTitle, color = c.text, modifier = Modifier.padding(top = 8.dp))
-            Text(s.subtitle, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 6.dp))
-            Spacer(Modifier.height(14.dp))
-            DayLine(s.spans)
-            if (s.pending > 0) {
-                Text("${s.pending} frasi ancora da trascrivere.", style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 10.dp))
+            TextAction("‹ Diario", onBack)
+            Text(s.subtitle, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 8.dp))
+            Text(s.title, style = Type.largeTitle, color = c.text)
+            if (s.story != null) Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip("Racconto", story) { story = true }
+                Chip("Trascrizione", !story) { story = false }
             }
         }
-        if (s.sections.isEmpty()) item {
-            Text("Niente di trascritto per questo giorno.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 28.dp))
-        }
-        s.sections.forEachIndexed { idx, (name, moments) ->
+        if (story && s.story != null) {
+            val st = s.story
             item {
-                Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(name, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
-                    if (idx == 0) TextAction("Condividi", onShare)
+                Text(st.giornata, style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 16.dp))
+                if (st.note.isNotBlank()) Text(st.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 10.dp))
+            }
+            if (s.people.isNotEmpty()) item {
+                Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 10.dp))
+                FlowChips(s.people) { onPerson(it) }
+            }
+            st.sections.filter { it.second.isNotEmpty() }.forEach { (title, entries) ->
+                item { Text(title, style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp)) }
+                items(entries) { e -> EntryRow(e, c.text) }
+            }
+            if (s.todos.isNotEmpty()) {
+                item { Text("Impegni nati qui", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp)) }
+                items(s.todos, key = { "t" + it.id }) { t ->
+                    Row(Modifier.fillMaxWidth().clickable { onToggleTodo(t.id, !t.done) }.padding(vertical = 10.dp)) {
+                        Check(t.done)
+                        Text(
+                            t.text, style = Type.text.copy(textDecoration = if (t.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null),
+                            color = if (t.done) c.faint else c.text, modifier = Modifier.padding(start = 14.dp, top = 1.dp)
+                        )
+                    }
                 }
             }
-            items(moments) { m ->
-                if (m.gap) {
-                    Column(Modifier.padding(vertical = 10.dp)) {
-                        Hairline()
-                        Text("${m.time} ${m.text}", style = Type.meta, color = c.second, modifier = Modifier.padding(vertical = 10.dp))
-                        Hairline()
+            if (st.tomorrow.isNotEmpty()) {
+                item { Text("Per il giorno dopo", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp, bottom = 4.dp)) }
+                items(st.tomorrow.withIndex().toList()) { (i, t) -> EntryRow(Entry("${i + 1}", t), c.text) }
+            }
+            if (st.verify.isNotEmpty()) {
+                item {
+                    Text("Da verificare", style = Type.section, color = c.text, modifier = Modifier.padding(top = 30.dp))
+                    Text("Parole che la trascrizione potrebbe aver capito male.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
+                }
+                items(st.verify) { e -> EntryRow(e, c.second) }
+            }
+            item { TextAction("Leggi la trascrizione", { story = false }, modifier = Modifier.padding(top = 26.dp)) }
+        } else {
+            item {
+                Spacer(Modifier.height(16.dp))
+                DayLine(s.spans)
+                if (s.pending > 0) Text("${s.pending} frasi ancora da trascrivere.", style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 10.dp))
+            }
+            if (s.sections.isEmpty()) item {
+                Text("Niente di trascritto per questo giorno.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 28.dp))
+            }
+            s.sections.forEachIndexed { idx, (name, moments) ->
+                item {
+                    Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
+                        if (idx == 0) TextAction("Condividi", onShare)
                     }
-                } else {
-                    Column(Modifier.padding(vertical = 10.dp)) {
-                        Text(m.time, style = Type.time, color = c.second)
-                        Spacer(Modifier.height(3.dp))
-                        Text(m.text, style = Type.body, color = c.text)
+                }
+                items(moments) { m ->
+                    if (m.gap) {
+                        Column(Modifier.padding(vertical = 10.dp)) {
+                            Hairline()
+                            Text("${m.time} ${m.text}", style = Type.meta, color = c.second, modifier = Modifier.padding(vertical = 10.dp))
+                            Hairline()
+                        }
+                    } else {
+                        Column(Modifier.padding(vertical = 10.dp)) {
+                            Text(m.time, style = Type.time, color = c.second)
+                            Spacer(Modifier.height(3.dp))
+                            Text(m.text, style = Type.body, color = c.text)
+                        }
                     }
                 }
             }
@@ -554,10 +719,14 @@ fun SettingsScreen(
     onDataSend: () -> Unit = {},
     onDataTest: () -> Unit = {},
     onDataDisconnect: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
 ) {
     val c = Life.c
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 32.dp)) {
-        item { ScreenHeader(null, "Opzioni") }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = if (onBack != null) 8.dp else 16.dp, bottom = 32.dp)) {
+        item {
+            onBack?.let { TextAction("‹ Oggi", it) }
+            ScreenHeader(null, "Opzioni", Modifier.padding(top = if (onBack != null) 0.dp else 0.dp))
+        }
 
         item { Group("Dati per Claude") }
         item { DataGroup(s, onDataSave, onDataSend, onDataTest, onDataDisconnect) }
@@ -855,7 +1024,7 @@ private fun Step(n: Int, title: String, done: Boolean, desc: String, action: @Co
 
 // =============================================================== Barra in basso
 
-enum class Tab(val label: String) { TODAY("Oggi"), YESTERDAY("Ieri"), TODO("Impegni"), DAYS("Giorni"), SETTINGS("Opzioni") }
+enum class Tab(val label: String) { TODAY("Oggi"), DIARY("Diario"), TODO("Impegni"), SEARCH("Cerca") }
 
 @Composable
 fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {

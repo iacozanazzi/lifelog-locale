@@ -75,6 +75,7 @@ private sealed interface Route {
     data object Setup : Route
     data class Day(val day: String) : Route
     data object Compare : Route
+    data object Settings : Route
 }
 
 @Composable
@@ -83,6 +84,8 @@ fun App(resumeTick: Int) {
     val prefs = remember { Prefs(ctx) }
     var route by remember { mutableStateOf<Route>(if (prefs.onboardingDone) Route.Main else Route.Setup) }
     var tab by remember { mutableStateOf(Tab.TODAY) }
+    var searchQuery by remember { mutableStateOf("") }
+    val openPerson: (String) -> Unit = { name -> searchQuery = name; tab = Tab.SEARCH; route = Route.Main }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -95,7 +98,11 @@ fun App(resumeTick: Int) {
     }
     LaunchedEffect(Unit) { Assistant.schedule(ctx) }
     BackHandler(enabled = route != Route.Main || tab != Tab.TODAY) {
-        if (route != Route.Main) route = Route.Main else tab = Tab.TODAY
+        route = when (route) {
+            Route.Compare -> Route.Settings
+            Route.Main -> { tab = Tab.TODAY; Route.Main }
+            else -> Route.Main
+        }
     }
 
     LifeTheme {
@@ -112,14 +119,14 @@ fun App(resumeTick: Int) {
                             prefs.onboardingDone = true
                             route = Route.Main
                         }
-                        is Route.Day -> DayRoute(r.day, tick) { route = Route.Main }
-                        Route.Compare -> CompareRoute { route = Route.Main }
+                        is Route.Day -> DayRoute(r.day, tick, onBack = { route = Route.Main }, onPerson = openPerson)
+                        Route.Compare -> CompareRoute { route = Route.Settings }
+                        Route.Settings -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare }, onBack = { route = Route.Main })
                         Route.Main -> when (tab) {
-                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
-                            Tab.YESTERDAY -> YesterdayRoute(tick, onSetup = { tab = Tab.SETTINGS }, onDay = { route = Route.Day(it) })
-                            Tab.TODO -> TodoRoute(tick, onSetup = { tab = Tab.SETTINGS })
-                            Tab.DAYS -> DaysRoute(tick, onDay = { route = Route.Day(it) })
-                            Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare })
+                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings })
+                            Tab.DIARY -> DaysRoute(tick, onDay = { route = Route.Day(it) })
+                            Tab.TODO -> TodoRoute(tick, onSetup = { route = Route.Settings })
+                            Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) })
                         }
                     }
                 }
@@ -191,7 +198,7 @@ private fun sentences(text: String): List<String> =
     text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.length > 1 }
 
 @Composable
-private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) {
+private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val db = remember { Db.get(ctx) }
@@ -221,7 +228,9 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
             val stalled = Watchdog.isStalled(ctx)
             val alive = RecorderService.isAlive(ctx)
             val pending = db.pendingCount()
+            val brief = briefOf(ctx)
             TodayUi(
+                brief = brief,
                 dateLabel = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() },
                 ready = Models.vadReady(ctx) && hasMic(ctx),
                 state = when {
@@ -260,7 +269,24 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
         },
         onShareCrash = { shareText(ctx, crash.orEmpty(), "Condividi l'errore") },
         onDismissCrash = { CrashLog.clear(ctx); crash = null },
+        onSettings = onSettings,
+        onToggleTodo = { id, done ->
+            Assistant.setDone(ctx, id, done)
+            base = base?.let { b -> b.copy(brief = b.brief?.let { br -> br.copy(todos = br.todos.map { if (it.id == id) it.copy(done = done) else it }) }) }
+        },
+        onOpenYesterday = { onDay(Assistant.yesterday()) },
     )
+}
+
+/** Riassunto di ieri per la cima di Oggi: frase di Claude e i primi impegni aperti. */
+private fun briefOf(ctx: Context): Brief? {
+    if (!Assistant.isConfigured(ctx)) return null
+    val a = Assistant.analysis(ctx) ?: return null
+    if (a.vuoto || a.giornata.isBlank()) return null
+    val y = Assistant.yesterday()
+    val open = Assistant.commitments(ctx).filter { it.chi != "altro" && it.stato != "fatto" }
+        .sortedWith(compareBy({ it.fonteGiorno != y }, { it.fonteGiorno }))
+    return Brief(a.giornata, open.take(3).map { TodoItem(it.id, it.testo, "", done = false, person = it.persona) }, more = (open.size - 3).coerceAtLeast(0))
 }
 
 private fun shareText(ctx: Context, text: String, title: String) {
@@ -283,20 +309,42 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var days by remember { mutableStateOf(emptyList<DayRow>()) }
-    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
     val dbVersion = remember(tick) { db.version }
     LaunchedEffect(dbVersion) {
         days = withContext(Dispatchers.IO) {
+            val cms = Assistant.commitments(ctx)
             db.days().take(120).map { d ->
+                val segs = db.segmentsOfDay(d.day)
+                val a = Assistant.analysis(ctx, d.day)
+                val decisions = a?.sezioni?.sumOf { s -> s.voci.count { it.tipo == "decisione" } } ?: 0
+                val todos = cms.count { it.fonteGiorno == d.day }
                 DayRow(
                     day = d.day, title = dayTitle(d.day),
                     meta = durationLabel(d.speechMs),
-                    spans = spansOf(db.segmentsOfDay(d.day), db.gapsOfDay(d.day)),
+                    spans = spansOf(segs, db.gapsOfDay(d.day)),
+                    summary = when {
+                        a != null && !a.vuoto && a.giornata.isNotBlank() -> a.giornata
+                        d.day == Db.today() -> "In corso." + (Exporter.paragraphs(segs).lastOrNull()?.let { " Ultima frase alle ${Notifications.hhmm(it.endMs)}." } ?: "")
+                        else -> Exporter.paragraphs(segs).firstOrNull()?.text?.let { sentences(it).firstOrNull() ?: it }?.take(140).orEmpty()
+                    },
+                    badge = listOfNotNull(
+                        decisions.takeIf { it > 0 }?.let { if (it == 1) "1 decisione" else "$it decisioni" },
+                        todos.takeIf { it > 0 }?.let { if (it == 1) "1 impegno" else "$it impegni" },
+                    ).joinToString(", "),
                 )
             }
         }
     }
+    DaysScreen(days, onDay)
+}
+
+@Composable
+private fun SearchRoute(query: String, onQuery: (String) -> Unit, onDay: (String) -> Unit) {
+    val ctx = LocalContext.current
+    val db = remember { Db.get(ctx) }
+    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
+    var people by remember { mutableStateOf(emptyList<String>()) }
+    LaunchedEffect(Unit) { people = withContext(Dispatchers.IO) { peopleOf(ctx) } }
     LaunchedEffect(query) {
         val q = query.trim()
         if (q.length >= 2) delay(250)
@@ -307,26 +355,25 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
             }
         }
     }
-    DaysScreen(days, onDay, query, hits, onQuery = { query = it })
+    SearchScreen(query, hits, onQuery = onQuery, onDay = onDay, people = people)
 }
+
+/** Persone nominate negli impegni, dalle più frequenti. */
+private fun peopleOf(ctx: Context): List<String> =
+    Assistant.commitments(ctx).map { it.persona.trim() }.filter { it.isNotBlank() }
+        .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }.take(20)
 
 // =============================================================== Ieri e Impegni
 
-@Composable
-private fun YesterdayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) {
-    val ctx = LocalContext.current
-    var ui by remember { mutableStateOf<YesterdayUi?>(null) }
-    LaunchedEffect(tick / 5) { ui = withContext(Dispatchers.IO) { yesterdayUi(ctx) } }
-    val s = ui ?: return
-    YesterdayScreen(s, onSetup = onSetup, onRefresh = {
-        Assistant.fetchSoon(ctx)
-        Toast.makeText(ctx, "Controllo…", Toast.LENGTH_SHORT).show()
-    }, onOpenDay = { onDay(Assistant.yesterday()) })
+/** Racconto di Claude per un giorno qualsiasi, o null se non c'è. */
+private fun storyOf(ctx: Context, day: String): YesterdayUi? {
+    val a = Assistant.analysis(ctx, day) ?: return null
+    if (a.vuoto) return null
+    return yesterdayUi(ctx, day)
 }
 
-private fun yesterdayUi(ctx: Context): YesterdayUi {
+private fun yesterdayUi(ctx: Context, day: String = Assistant.yesterday()): YesterdayUi {
     return run {
-        val day = Assistant.yesterday()
         val label = LocalDate.parse(day).format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() }
         val a = Assistant.analysis(ctx, day)
         when {
@@ -379,7 +426,7 @@ private fun TodoRoute(tick: Int, onSetup: () -> Unit) {
                 ageDays > 7 -> "Aperto da $ageDays giorni"
                 else -> ""
             }
-            return TodoItem(cm.id, cm.testo, meta, done = cm.stato == "fatto", age = age)
+            return TodoItem(cm.id, cm.testo, meta, done = cm.stato == "fatto", age = age, person = cm.persona.trim())
         }
         val sorted = list.sortedWith(compareBy<Assistant.Commitment>({ it.stato == "fatto" }, { it.fonteGiorno }))
         TodoUi(
@@ -387,6 +434,7 @@ private fun TodoRoute(tick: Int, onSetup: () -> Unit) {
             mine = sorted.filter { it.chi != "altro" }.map(::item),
             theirs = sorted.filter { it.chi == "altro" }.map(::item),
             note = if (list.isEmpty() && Assistant.isConfigured(ctx)) "Ancora nessun impegno: arrivano dopo la prima analisi notturna." else "",
+            people = list.filter { it.stato != "fatto" }.map { it.persona.trim() }.filter { it.isNotBlank() }.distinct(),
         )
     }
     TodoScreen(ui, onToggle = { id, done -> Assistant.setDone(ctx, id, done); version++ }, onSetup = onSetup)
@@ -405,12 +453,13 @@ private fun partOfDay(ms: Long): String {
 }
 
 @Composable
-private fun DayRoute(day: String, tick: Int, onBack: () -> Unit) {
+private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (String) -> Unit) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var ui by remember { mutableStateOf<DayUi?>(null) }
     var plain by remember { mutableStateOf("") }
-    LaunchedEffect(day, tick) {
+    val dbVersion = remember(tick) { db.version }
+    LaunchedEffect(day, dbVersion, tick / 15) {
         withContext(Dispatchers.IO) {
             val segs = db.segmentsOfDay(day)
             val gaps = db.gapsOfDay(day)
@@ -423,17 +472,29 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit) {
                 spans = spansOf(segs, gaps),
                 sections = sections,
                 pending = segs.count { it.text == null },
+                story = storyOf(ctx, day),
+                people = Assistant.commitments(ctx).filter { it.fonteGiorno == day }.map { it.persona.trim() }.filter { it.isNotBlank() }.distinct(),
+                todos = Assistant.commitments(ctx).filter { it.fonteGiorno == day }.map { TodoItem(it.id, it.testo, "", done = it.stato == "fatto", person = it.persona) },
             )
             plain = "Lifelog, ${daySubtitle(day)}\n\n" + all.filter { !it.second.gap }.joinToString("\n\n") { "${it.second.time}\n${it.second.text}" }
         }
     }
-    ui?.let { DayScreen(it, onBack, onShare = { shareText(ctx, plain, "Condividi la giornata") }) }
+    ui?.let { u ->
+        DayScreen(
+            u, onBack, onShare = { shareText(ctx, plain, "Condividi la giornata") }, onPerson = onPerson,
+            onToggleTodo = { id, done ->
+                Assistant.setDone(ctx, id, done)
+                ui = u.copy(todos = u.todos.map { if (it.id == id) it.copy(done = done) else it })
+            },
+        )
+    }
 }
 
 // =============================================================== Impostazioni
 
 @Composable
-private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit) {
+private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
@@ -549,6 +610,7 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
             }
         },
         onDataDisconnect = { Assistant.disconnect(ctx); dataMsg = ""; version++ },
+        onBack = onBack,
     )
 }
 
