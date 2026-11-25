@@ -48,8 +48,16 @@ object Watchdog {
         val now = System.currentTimeMillis()
         if (hb > 0 && now - hb > STALE_MS) {
             val minutes = (now - hb) / 60_000
-            Db.get(ctx).insertGap(hb, now, "servizio fermato dal sistema")
-            Notifications.alert(
+            val sp = ctx.getSharedPreferences("lifelog", Context.MODE_PRIVATE)
+            val updatedAt = sp.getLong("app_updated_at", 0L)
+            val rebootAt = sp.getLong("rebooted_at", 0L)
+            val reason = when {
+                updatedAt in hb..now -> "app aggiornata"
+                rebootAt in hb..now -> "telefono riavviato"
+                else -> "servizio fermato dal sistema"
+            }
+            Db.get(ctx).insertGap(hb, now, reason)
+            if (reason == "servizio fermato dal sistema") Notifications.alert(
                 ctx, "Persi $minutes minuti di registrazione",
                 "Dalle ${Notifications.hhmm(hb)} alle ${Notifications.hhmm(now)} non ho registrato. " +
                     "Se succede spesso, ricontrolla le impostazioni batteria Samsung in Lifelog."
@@ -91,7 +99,10 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val p = Prefs(context)
         if (!p.recordingWanted) return
-        val reason = if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) "App aggiornata" else "Telefono riavviato"
+        val updated = intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
+        context.getSharedPreferences("lifelog", Context.MODE_PRIVATE).edit()
+            .putLong(if (updated) "app_updated_at" else "rebooted_at", System.currentTimeMillis()).apply()
+        val reason = if (updated) "App aggiornata" else "Telefono riavviato"
         Notifications.alert(context, "$reason: registrazione in pausa", "Tocca qui per riprendere ad ascoltare.")
         Watchdog.schedule(context)
     }
