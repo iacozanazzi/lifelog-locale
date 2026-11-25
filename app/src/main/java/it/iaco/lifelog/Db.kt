@@ -25,7 +25,12 @@ data class DaySummary(val day: String, val segments: Int, val pending: Int, val 
  * L'audio viene cancellato appena trascritto: si tiene solo il testo.
  */
 class Db private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 1) {
+    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 2) {
+
+    /** Cresce a ogni scrittura: l'interfaccia ricalcola solo quando cambia qualcosa. */
+    @Volatile var version = 0L
+        private set
+    private fun bump() { version++ }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -51,7 +56,12 @@ class Db private constructor(context: Context) :
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            // I pezzi uniti a un blocco non devono più contare come parlato (prima si contavano due volte).
+            db.execSQL("UPDATE segments SET end_ms = start_ms WHERE text = ''")
+        }
+    }
 
     fun insertPending(startMs: Long, endMs: Long, audioPath: String): Long =
         writableDatabase.insert("segments", null, ContentValues().apply {
@@ -59,7 +69,7 @@ class Db private constructor(context: Context) :
             put("end_ms", endMs)
             put("day", dayOf(startMs))
             put("audio_path", audioPath)
-        })
+        }).also { bump() }
 
     fun nextPending(): Segment? = readableDatabase.rawQuery(
         "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT 1",
@@ -85,12 +95,14 @@ class Db private constructor(context: Context) :
             for (g in group.drop(1)) {
                 db.update("segments", ContentValues().apply {
                     put("text", "")
+                    put("end_ms", g.startMs) // assorbito nel primo: niente doppio conteggio
                     putNull("audio_path")
                 }, "id=?", arrayOf(g.id.toString()))
             }
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
+            bump()
         }
     }
 
@@ -107,6 +119,7 @@ class Db private constructor(context: Context) :
             put("text", text)
             putNull("audio_path")
         }, "id=?", arrayOf(id.toString()))
+        bump()
     }
 
     fun insertGap(startMs: Long, endMs: Long, reason: String) {
@@ -116,6 +129,7 @@ class Db private constructor(context: Context) :
             put("day", dayOf(startMs))
             put("reason", reason)
         })
+        bump()
     }
 
     fun days(): List<DaySummary> = readableDatabase.rawQuery(

@@ -41,7 +41,7 @@ object Assistant {
     private fun sp(ctx: Context) = ctx.getSharedPreferences(SP, Context.MODE_PRIVATE)
     fun token(ctx: Context) = Vault.get(ctx, "github_token")
     fun repo(ctx: Context) = sp(ctx).getString("repo", DEFAULT_REPO)!!
-    fun isConfigured(ctx: Context) = token(ctx).isNotBlank()
+    fun isConfigured(ctx: Context) = Vault.has(ctx, "github_token")
 
     fun configure(ctx: Context, token: String, repo: String) {
         Vault.put(ctx, "github_token", token.trim())

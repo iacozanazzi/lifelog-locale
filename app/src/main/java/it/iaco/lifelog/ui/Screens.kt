@@ -37,6 +37,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 
 // =============================================================== Stati (dati puri)
 
@@ -129,18 +132,10 @@ fun TodayScreen(
         ) {
             item {
                 ScreenHeader(s.dateLabel, "Oggi")
-                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val (color, text) = when {
-                        !s.ready -> c.second to "Configurazione da completare"
-                        s.state == RecState.STALLED -> c.text to "Fermo dalle ${s.stalledSince}"
-                        s.state == RecState.LISTENING -> c.accent to
-                            (if (s.speaking) "Qualcuno sta parlando" else "Sto ascoltando") + minutesSuffix(s.speechMinutes)
-                        else -> c.second to "In pausa" + minutesSuffix(s.speechMinutes)
-                    }
-                    StatusDot(color, if (s.state == RecState.LISTENING) s.level else 0f)
-                    Spacer(Modifier.width(9.dp))
-                    Text(text, style = Type.rowTitle.copy(fontWeight = FontWeight.Bold), color = color)
-                }
+                if (s.speechMinutes > 0) Text(
+                    "${durationText(s.speechMinutes)} di voce registrata",
+                    style = Type.meta, color = c.second, modifier = Modifier.padding(top = 6.dp)
+                )
             }
 
             s.crash?.let {
@@ -155,15 +150,28 @@ fun TodayScreen(
                 }
             }
 
-            item { Spacer(Modifier.height(26.dp)) }
+            if (s.state == RecState.STALLED) item {
+                Column(Modifier.padding(top = 22.dp)) {
+                    Text("La registrazione si è fermata alle ${s.stalledSince}.", style = Type.rowTitle, color = c.text)
+                    Text("Android l'ha chiusa. Riprendi con il pulsante qui sotto.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp))
+                }
+            }
+
+            item { Spacer(Modifier.height(28.dp)) }
 
             if (s.lines.isEmpty()) {
                 item {
                     Text(
-                        if (s.pending > 0) "Le tue parole compariranno qui appena trascritte."
-                        else "Quello che dici oggi comparirà qui.",
+                        when {
+                            !s.ready -> "Completa la configurazione e Lifelog comincerà ad ascoltare."
+                            s.pending > 0 -> "Le tue parole compariranno qui appena trascritte."
+                            s.state == RecState.LISTENING -> "Quello che dici oggi comparirà qui."
+                            else -> "Premi play e Lifelog ascolta la tua giornata."
+                        },
                         style = Type.lyric, color = c.faint
                     )
+                    if (s.ready && s.state == RecState.OFF) SolidButton("Inizia ad ascoltare", onToggle, modifier = Modifier.padding(top = 22.dp))
+                    if (!s.ready) SolidButton("Completa la configurazione", onSetup, modifier = Modifier.padding(top = 22.dp))
                 }
             } else {
                 val n = s.lines.size
@@ -180,14 +188,11 @@ fun TodayScreen(
                         modifier = Modifier.padding(bottom = 14.dp).clickable(onClick = onOpenToday)
                     )
                 }
-                s.lastTime?.let { item { Text("Ultima frase alle $it", style = Type.meta, color = c.second) } }
-            }
-            if (s.pending > 0) {
                 item {
-                    Text(
-                        "Altri ${s.pendingMinutes.coerceAtLeast(1)} min di voce aspettano la trascrizione.",
-                        style = Type.body, color = c.accent, modifier = Modifier.padding(top = 18.dp)
-                    )
+                    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        s.lastTime?.let { Text("Ultima frase alle $it", style = Type.meta, color = c.second, modifier = Modifier.weight(1f)) }
+                        TextAction("Tutta la giornata", onOpenToday)
+                    }
                 }
             }
         }
@@ -204,18 +209,27 @@ fun TodayScreen(
                 .padding(start = 16.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (s.ready && s.state == RecState.LISTENING) {
+                LevelBars(s.level, s.speaking)
+                Spacer(Modifier.width(12.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     when {
-                        !s.ready -> "Completa la configurazione"
-                        s.pending > 0 -> "${s.pending} frasi da trascrivere"
-                        else -> "Tutto trascritto"
+                        !s.ready -> "Configurazione da completare"
+                        s.state == RecState.STALLED -> "Fermo dalle ${s.stalledSince}"
+                        s.state == RecState.LISTENING -> if (s.speaking) "Qualcuno parla" else "In ascolto"
+                        else -> "In pausa"
                     },
-                    style = Type.rowTitle, color = c.text, maxLines = 1
+                    style = Type.rowTitle, color = if (s.state == RecState.STALLED) c.accent else c.text, maxLines = 1
                 )
-                val sub = if (!s.ready) "Mancano pochi passi" else s.transcribeStatus
-                if (sub.isNotBlank()) Text(sub, style = Type.meta, color = c.second, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (s.ready && s.canTranscribeNow) TextAction("Trascrivi ora", onTranscribeNow)
+                val sub = when {
+                    !s.ready -> "Mancano pochi passi"
+                    s.pending > 0 -> "${s.pendingMinutes.coerceAtLeast(1)} min da trascrivere. " + s.transcribeStatus.removePrefix("In attesa: ")
+                    else -> "Tutto trascritto"
+                }
+                Text(sub, style = Type.meta, color = c.second, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (s.ready && s.canTranscribeNow) TextAction("Trascrivi adesso", onTranscribeNow)
             }
             if (s.ready) {
                 Spacer(Modifier.width(12.dp))
@@ -225,26 +239,43 @@ fun TodayScreen(
     }
 }
 
-private fun minutesSuffix(m: Long) = when {
-    m <= 0 -> ""
-    m < 60 -> ", $m min di voce oggi"
-    else -> ", ${m / 60} h ${m % 60} min di voce oggi"
+private fun durationText(m: Long) = if (m < 60) "$m min" else "${m / 60} h ${m % 60} min"
+
+/** Tre barre che si muovono con la voce, come l'indicatore "in riproduzione". */
+@Composable
+private fun LevelBars(level: Float, speaking: Boolean) {
+    val c = Life.c
+    val l = if (speaking) level.coerceIn(0.15f, 1f) else 0.12f
+    val h1 by androidx.compose.animation.core.animateFloatAsState(0.35f + l * 0.65f, androidx.compose.animation.core.tween(140), label = "b1")
+    val h2 by androidx.compose.animation.core.animateFloatAsState(0.25f + l * 0.75f * 0.7f + (if (speaking) 0.2f else 0f), androidx.compose.animation.core.tween(200), label = "b2")
+    val h3 by androidx.compose.animation.core.animateFloatAsState(0.3f + l * 0.55f, androidx.compose.animation.core.tween(260), label = "b3")
+    Row(Modifier.height(22.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+        listOf(h1, h2.coerceAtMost(1f), h3).forEach { h ->
+            Box(Modifier.width(4.dp).height(22.dp * h).clip(RoundedCornerShape(2.dp)).background(c.accent))
+        }
+    }
 }
 
 @Composable
 private fun PlayPause(listening: Boolean, onClick: () -> Unit) {
     val c = Life.c
+    val ink = c.bg
     Box(
-        Modifier.size(46.dp).clip(CircleShape).background(c.text).clickable(onClick = onClick),
+        Modifier.size(46.dp).clip(CircleShape).background(c.text).clickable(onClick = onClick)
+            .then(Modifier.semantics { contentDescription = if (listening) "Metti in pausa la registrazione" else "Avvia la registrazione" }),
         contentAlignment = Alignment.Center
     ) {
-        if (listening) {
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Box(Modifier.width(4.dp).height(16.dp).background(c.bg, RoundedCornerShape(1.dp)))
-                Box(Modifier.width(4.dp).height(16.dp).background(c.bg, RoundedCornerShape(1.dp)))
+        androidx.compose.foundation.Canvas(Modifier.size(18.dp)) {
+            if (listening) {
+                val w = size.width * 0.26f
+                drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.14f, 0f), size = androidx.compose.ui.geometry.Size(w, size.height), cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f))
+                drawRoundRect(ink, topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.60f, 0f), size = androidx.compose.ui.geometry.Size(w, size.height), cornerRadius = androidx.compose.ui.geometry.CornerRadius(2f, 2f))
+            } else {
+                val p = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(size.width * 0.18f, 0f); lineTo(size.width * 0.98f, size.height / 2); lineTo(size.width * 0.18f, size.height); close()
+                }
+                drawPath(p, ink)
             }
-        } else {
-            Box(Modifier.size(14.dp).clip(CircleShape).background(c.accent))
         }
     }
 }
@@ -332,7 +363,7 @@ data class YesterdayUi(
 )
 
 @Composable
-fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit) {
+fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit, onOpenDay: () -> Unit = {}) {
     val c = Life.c
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 40.dp)) {
         item { ScreenHeader(s.dateLabel, "Ieri") }
@@ -345,7 +376,10 @@ fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit) 
             AnState.MISSING -> item {
                 Text("L'analisi di stanotte non è arrivata.", style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 18.dp))
                 if (s.note.isNotBlank()) Text(s.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 12.dp))
-                TextAction("Controlla di nuovo", onRefresh, modifier = Modifier.padding(top = 8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    TextAction("Controlla di nuovo", onRefresh)
+                    TextAction("Leggi la giornata", onOpenDay)
+                }
             }
             AnState.EMPTY -> item {
                 Text("Ieri hai parlato poco: niente da raccontare.", style = Type.lyric, color = c.second, modifier = Modifier.padding(top = 18.dp))
@@ -370,6 +404,7 @@ fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit) 
                     }
                     items(s.verify) { e -> EntryRow(e, c.second) }
                 }
+                item { TextAction("Leggi tutta la giornata", onOpenDay, modifier = Modifier.padding(top = 28.dp)) }
             }
         }
     }
@@ -522,7 +557,10 @@ fun SettingsScreen(
 ) {
     val c = Life.c
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 32.dp)) {
-        item { ScreenHeader(null, "Impostazioni") }
+        item { ScreenHeader(null, "Opzioni") }
+
+        item { Group("Dati per Claude") }
+        item { DataGroup(s, onDataSave, onDataSend, onDataTest, onDataDisconnect) }
 
         if (s.engines.isNotEmpty()) {
             item { Group("Motore di trascrizione") }
@@ -535,9 +573,6 @@ fun SettingsScreen(
                 Hairline()
             }
         }
-
-        item { Group("Dati per Claude") }
-        item { DataGroup(s, onDataSave, onDataSend, onDataTest, onDataDisconnect) }
 
         item { Group("Google Drive") }
         item {
@@ -669,7 +704,7 @@ fun CompareScreen(s: CompareUi, onBack: () -> Unit, onRun: () -> Unit) {
     val c = Life.c
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 8.dp, bottom = 40.dp)) {
         item {
-            TextAction("‹ Impostazioni", onBack)
+            TextAction("‹ Opzioni", onBack)
             Text("Confronta", style = Type.largeTitle, color = c.text, modifier = Modifier.padding(top = 8.dp))
             Text(
                 "Le ultime frasi registrate, trascritte da ogni motore pronto. Scegli quello che sbaglia meno con la tua voce.",
@@ -827,13 +862,16 @@ fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {
     val c = Life.c
     Column(Modifier.fillMaxWidth().background(c.bg)) {
         Hairline()
-        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 4.dp)) {
             Tab.entries.forEach { t ->
-                Box(
-                    Modifier.weight(1f).clickable { onSelect(t) }.padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
+                val sel = t == current
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable { onSelect(t) }.padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(t.label, style = Type.tab, color = if (t == current) c.accent else c.second)
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(if (sel) c.accent else Color.Transparent))
+                    Spacer(Modifier.height(5.dp))
+                    Text(t.label, style = Type.tab.copy(fontSize = 14.sp, fontWeight = if (sel) FontWeight.ExtraBold else FontWeight.SemiBold), color = if (sel) c.text else c.second, maxLines = 1)
                 }
             }
         }

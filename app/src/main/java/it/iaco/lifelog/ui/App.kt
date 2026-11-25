@@ -116,7 +116,7 @@ fun App(resumeTick: Int) {
                         Route.Compare -> CompareRoute { route = Route.Main }
                         Route.Main -> when (tab) {
                             Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
-                            Tab.YESTERDAY -> YesterdayRoute(tick, onSetup = { tab = Tab.SETTINGS })
+                            Tab.YESTERDAY -> YesterdayRoute(tick, onSetup = { tab = Tab.SETTINGS }, onDay = { route = Route.Day(it) })
                             Tab.TODO -> TodoRoute(tick, onSetup = { tab = Tab.SETTINGS })
                             Tab.DAYS -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare })
@@ -172,10 +172,17 @@ private fun momentsOf(segs: List<Segment>, gaps: List<Gap>): List<Pair<Long, Mom
     } + gaps.map {
         it.startMs to Moment(
             "${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}",
-            "non registrato (${(it.endMs - it.startMs) / 60_000} min). Il sistema ha chiuso l'app.",
+            "non registrato (${(it.endMs - it.startMs) / 60_000} min): ${gapReason(it.reason)}.",
             gap = true
         )
     }
+
+private fun gapReason(r: String) = when (r) {
+    "chiamata" -> "eri al telefono"
+    "app aggiornata" -> "l'app si stava aggiornando"
+    "telefono riavviato" -> "il telefono si è riavviato"
+    else -> "Android ha chiuso l'app"
+}
 
 // =============================================================== Oggi
 
@@ -193,16 +200,27 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
     var crash by remember { mutableStateOf(CrashLog.read(ctx)) }
     var base by remember { mutableStateOf<TodayUi?>(null) }
 
-    LaunchedEffect(tick) {
+    // La parte pesante (le frasi di oggi) si ricalcola solo quando il database cambia.
+    val dbVersion = remember(tick) { db.version }
+    var heavy by remember { mutableStateOf<Triple<List<String>, String?, Long>?>(null) }
+    LaunchedEffect(dbVersion, Db.today()) {
+        heavy = withContext(Dispatchers.IO) {
+            val segs = db.segmentsOfDay(Db.today())
+            val paras = Exporter.paragraphs(segs)
+            Triple(
+                paras.flatMap { sentences(it.text) }.takeLast(5),
+                paras.lastOrNull()?.let { Notifications.hhmm(it.endMs) },
+                segs.sumOf { it.endMs - it.startMs } / 60_000,
+            )
+        }
+    }
+    LaunchedEffect(tick, heavy) {
+        val h = heavy ?: return@LaunchedEffect
         base = withContext(Dispatchers.IO) {
-            val today = Db.today()
-            val segs = db.segmentsOfDay(today)
             val wanted = prefs.recordingWanted
             val stalled = Watchdog.isStalled(ctx)
             val alive = RecorderService.isAlive(ctx)
             val pending = db.pendingCount()
-            val paras = Exporter.paragraphs(segs)
-            val lines = paras.flatMap { sentences(it.text) }.takeLast(5)
             TodayUi(
                 dateLabel = LocalDate.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() },
                 ready = Models.vadReady(ctx) && hasMic(ctx),
@@ -213,13 +231,13 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
                 },
                 stalledSince = if (stalled) Notifications.hhmm(prefs.lastHeartbeat) else null,
                 level = 0f, speaking = false,
-                speechMinutes = segs.sumOf { it.endMs - it.startMs } / 60_000,
+                speechMinutes = h.third,
                 pending = pending,
                 pendingMinutes = db.pendingSeconds() / 60,
                 transcribeStatus = prefs.transcribeStatus,
                 canTranscribeNow = pending > 0 && Models.parakeetReady(ctx),
-                lines = lines,
-                lastTime = paras.lastOrNull()?.let { Notifications.hhmm(it.endMs) },
+                lines = h.first,
+                lastTime = h.second,
                 crash = null,
             )
         }
@@ -267,7 +285,8 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
     var days by remember { mutableStateOf(emptyList<DayRow>()) }
     var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
-    LaunchedEffect(tick) {
+    val dbVersion = remember(tick) { db.version }
+    LaunchedEffect(dbVersion) {
         days = withContext(Dispatchers.IO) {
             db.days().take(120).map { d ->
                 DayRow(
@@ -294,9 +313,19 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
 // =============================================================== Ieri e Impegni
 
 @Composable
-private fun YesterdayRoute(tick: Int, onSetup: () -> Unit) {
+private fun YesterdayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) {
     val ctx = LocalContext.current
-    val ui = remember(tick) {
+    var ui by remember { mutableStateOf<YesterdayUi?>(null) }
+    LaunchedEffect(tick / 5) { ui = withContext(Dispatchers.IO) { yesterdayUi(ctx) } }
+    val s = ui ?: return
+    YesterdayScreen(s, onSetup = onSetup, onRefresh = {
+        Assistant.fetchSoon(ctx)
+        Toast.makeText(ctx, "Controllo…", Toast.LENGTH_SHORT).show()
+    }, onOpenDay = { onDay(Assistant.yesterday()) })
+}
+
+private fun yesterdayUi(ctx: Context): YesterdayUi {
+    return run {
         val day = Assistant.yesterday()
         val label = LocalDate.parse(day).format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() }
         val a = Assistant.analysis(ctx, day)
@@ -314,10 +343,6 @@ private fun YesterdayRoute(tick: Int, onSetup: () -> Unit) {
             )
         }
     }
-    YesterdayScreen(ui, onSetup = onSetup, onRefresh = {
-        Assistant.fetchSoon(ctx)
-        Toast.makeText(ctx, "Controllo…", Toast.LENGTH_SHORT).show()
-    })
 }
 
 private fun kindLabel(t: String) = when (t.lowercase()) {
@@ -338,7 +363,7 @@ private fun generatedAt(iso: String) = try {
 private fun TodoRoute(tick: Int, onSetup: () -> Unit) {
     val ctx = LocalContext.current
     var version by remember { mutableIntStateOf(0) }
-    val ui = remember(tick, version) {
+    val ui = remember(tick / 5, version) {
         val today = LocalDate.now(zone)
         val list = Assistant.commitments(ctx)
         fun item(cm: Assistant.Commitment): TodoItem {

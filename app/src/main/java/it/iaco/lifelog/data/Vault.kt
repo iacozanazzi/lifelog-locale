@@ -39,6 +39,8 @@ object Vault {
         sp.edit().putString(name, Base64.encodeToString(enc, Base64.NO_WRAP)).apply()
     }
 
+    fun has(ctx: Context, name: String) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).contains(name)
+
     fun get(ctx: Context, name: String): String {
         val s = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(name, null) ?: return ""
         return try {

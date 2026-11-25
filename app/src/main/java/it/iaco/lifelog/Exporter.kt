@@ -60,7 +60,7 @@ object Exporter {
         val root = JSONObject()
         root.put("format", "lifelog-locale/1")
         root.put("exported_at", isoOf(System.currentTimeMillis()))
-        root.put("note", "Trascrizione automatica on-device (Parakeet TDT 0.6B v3). Può contenere errori.")
+        root.put("note", "Trascrizione automatica sul telefono (Parakeet o Whisper). Può contenere errori.")
         root.put("paragraphs", JSONArray().apply {
             paragraphs(db.allTranscribed()).forEach {
                 put(JSONObject().apply {
