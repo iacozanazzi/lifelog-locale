@@ -76,6 +76,9 @@ private sealed interface Route {
     data class Day(val day: String) : Route
     data object Compare : Route
     data object Settings : Route
+    data object Seral : Route
+    data object Uni : Route
+    data object Review : Route
 }
 
 @Composable
@@ -86,6 +89,7 @@ fun App(resumeTick: Int) {
     var tab by remember { mutableStateOf(Tab.TODAY) }
     var searchQuery by remember { mutableStateOf("") }
     val openPerson: (String) -> Unit = { name -> searchQuery = name; tab = Tab.SEARCH; route = Route.Main }
+    val openArea: (String) -> Unit = { a -> route = if (a == "seral") Route.Seral else Route.Uni }
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -100,6 +104,7 @@ fun App(resumeTick: Int) {
     BackHandler(enabled = route != Route.Main || tab != Tab.TODAY) {
         route = when (route) {
             Route.Compare -> Route.Settings
+            Route.Review -> Route.Uni
             Route.Main -> { tab = Tab.TODAY; Route.Main }
             else -> Route.Main
         }
@@ -119,11 +124,14 @@ fun App(resumeTick: Int) {
                             prefs.onboardingDone = true
                             route = Route.Main
                         }
-                        is Route.Day -> DayRoute(r.day, tick, onBack = { route = Route.Main }, onPerson = openPerson)
+                        is Route.Day -> DayRoute(r.day, tick, onBack = { route = Route.Main }, onPerson = openPerson, onArea = openArea)
+                        Route.Seral -> SeralRoute(tick, onBack = { route = Route.Main }, onSetup = { route = Route.Settings })
+                        Route.Uni -> UniRoute(tick, onBack = { route = Route.Main }, onReview = { route = Route.Review }, onSetup = { route = Route.Settings })
+                        Route.Review -> ReviewRoute(onBack = { route = Route.Uni })
                         Route.Compare -> CompareRoute { route = Route.Settings }
                         Route.Settings -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare }, onBack = { route = Route.Main })
                         Route.Main -> when (tab) {
-                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings })
+                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onArea = openArea)
                             Tab.DIARY -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.TODO -> TodoRoute(tick, onSetup = { route = Route.Settings })
                             Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) })
@@ -198,7 +206,7 @@ private fun sentences(text: String): List<String> =
     text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.length > 1 }
 
 @Composable
-private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit) {
+private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit, onArea: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val db = remember { Db.get(ctx) }
@@ -275,6 +283,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             base = base?.let { b -> b.copy(brief = b.brief?.let { br -> br.copy(todos = br.todos.map { if (it.id == id) it.copy(done = done) else it }) }) }
         },
         onOpenYesterday = { onDay(Assistant.yesterday()) },
+        cards = { AreeTodayCard(tick, onArea) },
     )
 }
 
@@ -453,7 +462,7 @@ private fun partOfDay(ms: Long): String {
 }
 
 @Composable
-private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (String) -> Unit) {
+private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (String) -> Unit, onArea: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var ui by remember { mutableStateOf<DayUi?>(null) }
@@ -481,7 +490,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
     }
     ui?.let { u ->
         DayScreen(
-            u, onBack, onShare = { shareText(ctx, plain, "Condividi la giornata") }, onPerson = onPerson,
+            u, onBack, onShare = { shareText(ctx, plain, "Condividi la giornata") }, onPerson = onPerson, onArea = onArea,
             onToggleTodo = { id, done ->
                 Assistant.setDone(ctx, id, done)
                 ui = u.copy(todos = u.todos.map { if (it.id == id) it.copy(done = done) else it })

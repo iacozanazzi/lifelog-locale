@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import it.iaco.lifelog.Db
+import it.iaco.lifelog.aree.Aree
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -113,8 +114,10 @@ object Assistant {
             gh.write("stato/app.json", state.toString(2), "app: stato impegni")
             sp.edit().putString("sent_state", sh).apply()
         }
+        // Seral e università: un errore qui non deve fermare l'invio dei giorni.
+        val areeErr = runCatching { Aree.upload(ctx, gh) }.exceptionOrNull()
         val msg = "Inviato alle ${clock()}: " + if (sent == 0) "niente di nuovo" else if (sent == 1) "1 giorno" else "$sent giorni"
-        ctx.uploadStatus = msg
+        ctx.uploadStatus = msg + (areeErr?.let { ". Seral e università non inviati: ${it.message}" } ?: "")
         return msg
     }
 
@@ -149,6 +152,7 @@ object Assistant {
         val an = gh.read("analisi/$day.json")
         if (an != null) File(dir(ctx), "analisi-$day.json").writeText(an)
         gh.read("impegni.json")?.let { File(dir(ctx), "impegni.json").writeText(it) }
+        runCatching { Aree.fetch(ctx, gh) } // Seral e università
         val msg = if (an != null) "Analisi di ieri ricevuta alle ${clock()}" else "Controllato alle ${clock()}: l'analisi di stanotte non è ancora arrivata"
         ctx.fetchStatus = msg
         return msg
