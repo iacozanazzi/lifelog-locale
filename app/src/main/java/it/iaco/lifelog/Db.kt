@@ -7,6 +7,8 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import it.iaco.lifelog.people.Vec
+import it.iaco.lifelog.people.Voice
 
 data class Segment(
     val id: Long,
@@ -14,6 +16,8 @@ data class Segment(
     val endMs: Long,
     val text: String?,
     val audioPath: String?,
+    /** Chi parla: "io", "v-3", oppure null se non si sa (thread Persone). */
+    val voice: String? = null,
 )
 
 data class Gap(val startMs: Long, val endMs: Long, val reason: String)
@@ -25,7 +29,7 @@ data class DaySummary(val day: String, val segments: Int, val pending: Int, val 
  * L'audio viene cancellato appena trascritto: si tiene solo il testo.
  */
 class Db private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 2) {
+    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 3) {
 
     /** Cresce a ogni scrittura: l'interfaccia ricalcola solo quando cambia qualcosa. */
     @Volatile var version = 0L
@@ -54,6 +58,7 @@ class Db private constructor(context: Context) :
                 reason TEXT NOT NULL
             )"""
         )
+        addVoices(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -61,7 +66,104 @@ class Db private constructor(context: Context) :
             // I pezzi uniti a un blocco non devono più contare come parlato (prima si contavano due volte).
             db.execSQL("UPDATE segments SET end_ms = start_ms WHERE text = ''")
         }
+        if (oldVersion < 3) addVoices(db)
     }
+
+    /**
+     * Versione 3 (Persone): chi parla in ogni segmento e le voci conosciute.
+     * Solo colonne nuove e una tabella nuova: le righe esistenti non si toccano.
+     * Le impronte vocali (centroid, samples) restano qui, sul telefono, e non escono mai.
+     */
+    private fun addVoices(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE segments ADD COLUMN voice TEXT")
+        db.execSQL("ALTER TABLE segments ADD COLUMN voice_score REAL")
+        db.execSQL(
+            """CREATE TABLE voices (
+                id TEXT PRIMARY KEY,
+                n INTEGER NOT NULL,
+                name TEXT,
+                persona TEXT,
+                centroid BLOB NOT NULL,
+                samples BLOB,
+                seconds REAL NOT NULL DEFAULT 0,
+                first_ms INTEGER NOT NULL,
+                last_ms INTEGER NOT NULL,
+                named_ms INTEGER
+            )"""
+        )
+    }
+
+    // ------------------------------------------------------------- voci (thread Persone)
+
+    fun setVoice(id: Long, voice: String?, score: Float?) {
+        writableDatabase.update("segments", ContentValues().apply {
+            if (voice == null) putNull("voice") else put("voice", voice)
+            if (score == null) putNull("voice_score") else put("voice_score", score)
+        }, "id=?", arrayOf(id.toString()))
+        bump()
+    }
+
+    /** Sposta tutti i segmenti da una voce all'altra (o a nessuna, con to = null). */
+    fun moveVoice(from: String, to: String?) {
+        writableDatabase.update("segments", ContentValues().apply {
+            if (to == null) putNull("voice") else put("voice", to)
+        }, "voice=?", arrayOf(from))
+        bump()
+    }
+
+    fun clearAllVoices() {
+        writableDatabase.execSQL("UPDATE segments SET voice = NULL, voice_score = NULL")
+        writableDatabase.delete("voices", null, null)
+        bump()
+    }
+
+    fun loadVoices(): List<Voice> = readableDatabase.rawQuery(
+        "SELECT id,n,name,persona,centroid,samples,seconds,first_ms,last_ms,named_ms FROM voices ORDER BY n", null
+    ).use { c ->
+        buildList {
+            while (c.moveToNext()) add(
+                Voice(
+                    id = c.getString(0), n = c.getInt(1),
+                    name = if (c.isNull(2)) null else c.getString(2),
+                    persona = if (c.isNull(3)) null else c.getString(3),
+                    centroid = Vec.fromBytes(c.getBlob(4)),
+                    samples = if (c.isNull(5)) emptyList() else Vec.listFromBytes(c.getBlob(5)),
+                    seconds = c.getDouble(6), firstMs = c.getLong(7), lastMs = c.getLong(8),
+                    namedMs = if (c.isNull(9)) null else c.getLong(9),
+                )
+            )
+        }
+    }
+
+    fun saveVoice(v: Voice) {
+        writableDatabase.insertWithOnConflict("voices", null, ContentValues().apply {
+            put("id", v.id); put("n", v.n)
+            if (v.name == null) putNull("name") else put("name", v.name)
+            if (v.persona == null) putNull("persona") else put("persona", v.persona)
+            put("centroid", Vec.toBytes(v.centroid))
+            put("samples", Vec.listToBytes(v.samples))
+            put("seconds", v.seconds); put("first_ms", v.firstMs); put("last_ms", v.lastMs)
+            if (v.namedMs == null) putNull("named_ms") else put("named_ms", v.namedMs)
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+        bump()
+    }
+
+    fun deleteVoice(id: String) {
+        writableDatabase.delete("voices", "id=?", arrayOf(id))
+        bump()
+    }
+
+    /** Statistiche per voce: secondi parlati, giorni distinti, ultima volta. */
+    fun voiceStats(): Map<String, Triple<Long, Int, Long>> = readableDatabase.rawQuery(
+        """SELECT voice, COALESCE(SUM(end_ms-start_ms),0), COUNT(DISTINCT day), MAX(end_ms)
+           FROM segments WHERE voice IS NOT NULL AND text IS NOT NULL AND text != '' GROUP BY voice""", null
+    ).use { c -> buildMap { while (c.moveToNext()) put(c.getString(0), Triple(c.getLong(1) / 1000, c.getInt(2), c.getLong(3))) } }
+
+    /** Le frasi più lunghe dette da una voce: servono a riconoscerla senza tenere l'audio. */
+    fun samplesOfVoice(voice: String, limit: Int = 5): List<Segment> = readableDatabase.rawQuery(
+        "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE voice=? AND text IS NOT NULL AND LENGTH(text) > 20 ORDER BY LENGTH(text) DESC LIMIT $limit",
+        arrayOf(voice)
+    ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
 
     fun insertPending(startMs: Long, endMs: Long, audioPath: String): Long =
         writableDatabase.insert("segments", null, ContentValues().apply {
@@ -72,12 +174,12 @@ class Db private constructor(context: Context) :
         }).also { bump() }
 
     fun nextPending(): Segment? = readableDatabase.rawQuery(
-        "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT 1",
+        "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT 1",
         null
     ).use { c -> if (c.moveToFirst()) c.toSegment() else null }
 
     fun pendingBatch(limit: Int): List<Segment> = readableDatabase.rawQuery(
-        "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT $limit",
+        "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE text IS NULL ORDER BY start_ms LIMIT $limit",
         null
     ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
 
@@ -143,7 +245,7 @@ class Db private constructor(context: Context) :
     }
 
     fun segmentsOfDay(day: String): List<Segment> = readableDatabase.rawQuery(
-        "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE day=? ORDER BY start_ms",
+        "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE day=? ORDER BY start_ms",
         arrayOf(day)
     ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
 
@@ -152,7 +254,7 @@ class Db private constructor(context: Context) :
     ).use { c -> buildList { while (c.moveToNext()) add(Gap(c.getLong(0), c.getLong(1), c.getString(2))) } }
 
     fun allTranscribed(): List<Segment> = readableDatabase.rawQuery(
-        "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text IS NOT NULL AND text != '' ORDER BY start_ms",
+        "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE text IS NOT NULL AND text != '' ORDER BY start_ms",
         null
     ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
 
@@ -163,7 +265,7 @@ class Db private constructor(context: Context) :
     fun search(query: String, limit: Int = 200): List<Segment> {
         val escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return readableDatabase.rawQuery(
-            "SELECT id,start_ms,end_ms,text,audio_path FROM segments WHERE text LIKE ? ESCAPE '\\' ORDER BY start_ms DESC LIMIT $limit",
+            "SELECT id,start_ms,end_ms,text,audio_path,voice FROM segments WHERE text LIKE ? ESCAPE '\\' ORDER BY start_ms DESC LIMIT $limit",
             arrayOf("%$escaped%")
         ).use { c -> buildList { while (c.moveToNext()) add(c.toSegment()) } }
     }
@@ -174,6 +276,7 @@ class Db private constructor(context: Context) :
         endMs = getLong(2),
         text = if (isNull(3)) null else getString(3),
         audioPath = if (isNull(4)) null else getString(4),
+        voice = if (columnCount > 5 && !isNull(5)) getString(5) else null,
     )
 
     companion object {

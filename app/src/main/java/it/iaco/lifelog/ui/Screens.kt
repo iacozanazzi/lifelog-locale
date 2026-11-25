@@ -67,6 +67,8 @@ data class TodayUi(
     val brief: Brief? = null,
     /** Agenda di oggi, scadenze, preparazione per domani, date proposte e bozze (BriefingScreens.kt). */
     val briefing: BriefingUi? = null,
+    /** Promemoria sulle persone (thread Persone): chi vedi oggi, compleanni, chi non senti da tempo. */
+    val people: List<PeopleTodayRow> = emptyList(),
 )
 
 data class Brief(val text: String, val todos: List<TodoItem>, val more: Int = 0)
@@ -143,6 +145,7 @@ fun TodayScreen(
     memory: MemoryTodayUi? = null,
     onMemento: (String) -> Unit = {},
     onWeek: () -> Unit = {},
+    onPerson: (String) -> Unit = {},
     /** Schede delle funzioni (Seral e università, ecc.), sotto "Da ieri". */
     cards: @Composable () -> Unit = {},
 ) {
@@ -193,6 +196,7 @@ fun TodayScreen(
             briefingCards(s.briefing, briefingActions)
 
             memoryCards(memory, onMemento, onWeek)
+            if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
             item { cards() }
 
             s.crash?.let {
@@ -413,6 +417,8 @@ fun SearchScreen(
     onQuery: (String) -> Unit,
     onDay: (String) -> Unit,
     people: List<String> = emptyList(),
+    onPerson: (String) -> Unit = onQuery,
+    onPeople: () -> Unit = {},
 ) {
     val c = Life.c
     val searching = query.trim().length >= 2
@@ -442,10 +448,11 @@ fun SearchScreen(
                 )
                 people.isNotEmpty() -> {
                     Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 18.dp, bottom = 10.dp))
-                    FlowChips(people) { onQuery(it) }
+                    FlowChips(people) { onPerson(it) }
                 }
                 else -> Text("Cerca in tutto quello che hai detto.", style = Type.meta, color = c.second)
             }
+            if (!searching) NavRow("Persone e voci", onClick = onPeople)
         }
         if (searching) items(hits) { h ->
             Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {
