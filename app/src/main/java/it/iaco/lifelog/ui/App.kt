@@ -363,6 +363,8 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
                         WorkInfo.State.FAILED -> "Download non riuscito. Tocca per riprovare."
                         else -> "Tocca per scaricarlo (564 MB, serve il Wi-Fi)"
                     }
+                    e == Engine.AUTO && ready && !Models.whisperReady(ctx) -> "Per ora usa solo Parakeet. Tocca Whisper qui sotto per scaricarlo: poi lo uso da solo per le voci lontane."
+                    e == Engine.AUTO && ready -> "Pronto"
                     e == Engine.GOOGLE && !ready -> "Serve Android 13 o più recente"
                     e == Engine.GOOGLE -> "Se manca il pacchetto italiano offline, lo scarica Google da solo al primo uso."
                     !ready -> "Non ancora scaricato"
@@ -406,10 +408,10 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
         onEngine = { key ->
             val e = Engine.valueOf(key)
             if (e == Engine.WHISPER && !Models.whisperReady(ctx)) {
+                // Scarico e basta: in Automatico verrà usato da solo per le voci lontane.
                 ModelSetupWorker.startWhisper(ctx, wifiOnly = true)
-                Toast.makeText(ctx, "Scarico Whisper. Lo uso appena è pronto.", Toast.LENGTH_LONG).show()
-            }
-            if (e == Engine.GOOGLE && !AsrFactory.ready(ctx, e)) {
+                Toast.makeText(ctx, "Scarico Whisper (564 MB, col Wi-Fi). In Automatico lo uso per le voci lontane.", Toast.LENGTH_LONG).show()
+            } else if (e == Engine.GOOGLE && !AsrFactory.ready(ctx, e)) {
                 Toast.makeText(ctx, "Google sul telefono richiede Android 13", Toast.LENGTH_LONG).show()
             } else {
                 prefs.engine = e
@@ -438,7 +440,7 @@ private fun CompareRoute(onBack: () -> Unit) {
             }
             val audio = clips.map { (start, f) -> start to Pcm.read(f) }
             val results = audio.map { mutableListOf<Pair<String, String>>() }
-            val engines = Engine.entries.filter { AsrFactory.ready(ctx, it) }
+            val engines = Engine.entries.filter { it != Engine.AUTO && AsrFactory.ready(ctx, it) }
             for (e in engines) {
                 ui = ui.copy(running = true, status = "Trascrivo con ${e.label}…")
                 val asr = try { AsrFactory.create(ctx, e, threads = 4) } catch (ex: Throwable) {
@@ -458,7 +460,7 @@ private fun CompareRoute(onBack: () -> Unit) {
                     asr.release()
                 }
             }
-            val missing = Engine.entries.filter { it !in engines }.joinToString { it.label }
+            val missing = Engine.entries.filter { it != Engine.AUTO && it !in engines }.joinToString { it.label }
             ui = ui.copy(running = false, status = if (missing.isEmpty()) "Fatto." else "Fatto. Non pronti: $missing.")
         }
     })

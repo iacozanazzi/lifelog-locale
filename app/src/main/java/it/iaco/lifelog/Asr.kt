@@ -19,6 +19,7 @@ import kotlin.coroutines.resume
 
 /** I motori di trascrizione tra cui si può scegliere. */
 enum class Engine(val label: String, val detail: String) {
+    AUTO("Automatico", "Parakeet per le voci vicine, Whisper per quelle lontane o deboli, dove sbaglia molto meno."),
     PARAKEET("Parakeet", "Veloce. Riconosce la lingua da solo."),
     WHISPER("Whisper turbo", "Più preciso in italiano, circa 3 volte più lento. Scarica 564 MB."),
     GOOGLE("Google sul telefono", "Il riconoscimento vocale di Google, offline. Serve Android 13 e il pacchetto italiano."),
@@ -161,14 +162,56 @@ class GoogleAsr(private val ctx: Context) : Asr {
     override fun release() {}
 }
 
+/**
+ * Sceglie il motore blocco per blocco: se la voce è debole (lontana) usa Whisper,
+ * che nei test sbagliava la metà di Parakeet su audio lontano e rumoroso.
+ * Whisper viene caricato solo quando serve.
+ */
+class AutoAsr(private val ctx: Context, private val threads: Int) : Asr {
+    private val parakeet = AsrFactory.create(ctx, Engine.PARAKEET, 2)
+    private var whisper: Asr? = null
+
+    override suspend fun transcribe(samples: FloatArray): String {
+        val quiet = Level.speechDbfs(samples) < QUIET_DBFS
+        if (quiet && Models.whisperReady(ctx)) {
+            val w = whisper ?: AsrFactory.create(ctx, Engine.WHISPER, threads).also { whisper = it }
+            return w.transcribe(samples)
+        }
+        return parakeet.transcribe(samples)
+    }
+
+    override fun release() {
+        parakeet.release(); whisper?.release()
+    }
+
+    companion object { const val QUIET_DBFS = -35.0 }
+}
+
+/** Livello del parlato: il 75° percentile dell'energia su finestre da 30 ms. */
+object Level {
+    fun speechDbfs(x: FloatArray): Double {
+        val win = Models.SAMPLE_RATE * 3 / 100
+        if (x.size < win) return -100.0
+        val e = (0 until x.size / win).map { k ->
+            var s = 0.0
+            for (i in k * win until (k + 1) * win) s += x[i] * x[i]
+            s / win
+        }.sorted()
+        val p75 = e[(e.size * 3 / 4).coerceAtMost(e.size - 1)]
+        return 10 * kotlin.math.log10(p75 + 1e-12)
+    }
+}
+
 object AsrFactory {
     fun ready(ctx: Context, e: Engine) = when (e) {
+        Engine.AUTO -> Models.parakeetReady(ctx)
         Engine.PARAKEET -> Models.parakeetReady(ctx)
         Engine.WHISPER -> Models.whisperReady(ctx)
         Engine.GOOGLE -> Build.VERSION.SDK_INT >= 33
     }
 
     fun create(ctx: Context, e: Engine, threads: Int): Asr = when (e) {
+        Engine.AUTO -> AutoAsr(ctx, threads)
         Engine.PARAKEET -> SherpaAsr(OfflineRecognizer(null, Models.recognizerConfig(ctx, threads)))
         Engine.WHISPER -> SherpaAsr(OfflineRecognizer(null, Models.whisperConfig(ctx, threads)), fixLoops = true)
         Engine.GOOGLE -> GoogleAsr(ctx.applicationContext)

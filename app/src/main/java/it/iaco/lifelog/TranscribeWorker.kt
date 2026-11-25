@@ -117,7 +117,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
     private suspend fun runBatch(ctx: Context, db: Db, prefs: Prefs, manual: Boolean, engine: Engine): Outcome {
         val deadline = System.currentTimeMillis() + 8 * 60_000
         prefs.transcribeStatus = "Carico ${engine.label}…"
-        val threads = if (engine == Engine.WHISPER && Throttle.battery(ctx).plugged) 4 else 2
+        val threads = if (engine != Engine.PARAKEET && Throttle.battery(ctx).plugged) 4 else 2
         val asr = AsrFactory.create(ctx, engine, threads)
         var done = 0
         try {

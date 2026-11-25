@@ -48,7 +48,7 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putString("drive_status", v).apply()
 
     var engine: Engine
-        get() = runCatching { Engine.valueOf(sp.getString("engine", Engine.PARAKEET.name)!!) }.getOrDefault(Engine.PARAKEET)
+        get() = runCatching { Engine.valueOf(sp.getString("engine", Engine.AUTO.name)!!) }.getOrDefault(Engine.AUTO)
         set(v) = sp.edit().putString("engine", v.name).apply()
 
     var onboardingDone: Boolean
