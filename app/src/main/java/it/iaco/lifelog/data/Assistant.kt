@@ -12,6 +12,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import it.iaco.lifelog.Db
+import it.iaco.lifelog.briefing.Briefing
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -107,6 +108,7 @@ object Assistant {
             sp.edit().putString("sent_${d.day}", h).apply()
             sent++
         }
+        if (runCatching { Briefing.uploadCalendar(ctx, gh) }.getOrDefault(false)) sent++
         val state = appStateJson(ctx)
         val sh = sha1(state.toString().replace(Regex("\"aggiornato\":\"[^\"]*\""), ""))
         if (sp.getString("sent_state", null) != sh) {
@@ -134,7 +136,7 @@ object Assistant {
         val st = localState(ctx)
         val arr = JSONArray()
         st.keys().forEach { id -> arr.put(JSONObject(st.getJSONObject(id).toString()).put("id", id)) }
-        return JSONObject().put("aggiornato", now()).put("impegni", arr)
+        return JSONObject().put("aggiornato", now()).put("impegni", arr).also { Briefing.addState(ctx, it) }
     }
 
     // ------------------------------------------------------------- ricezione
@@ -149,6 +151,7 @@ object Assistant {
         val an = gh.read("analisi/$day.json")
         if (an != null) File(dir(ctx), "analisi-$day.json").writeText(an)
         gh.read("impegni.json")?.let { File(dir(ctx), "impegni.json").writeText(it) }
+        runCatching { Briefing.fetch(ctx, gh) }
         val msg = if (an != null) "Analisi di ieri ricevuta alle ${clock()}" else "Controllato alle ${clock()}: l'analisi di stanotte non è ancora arrivata"
         ctx.fetchStatus = msg
         return msg
