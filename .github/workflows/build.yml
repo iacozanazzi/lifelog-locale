@@ -49,13 +49,21 @@ jobs:
       - name: Pubblica come Release (download diretto dal telefono)
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: v${{ github.run_number }}
         run: |
-          # Prima l'APK da solo (crea la release), poi le anteprime una per volta:
-          # caricarle tutte insieme in parallelo faceva fallire il passaggio.
-          gh release create "v${{ github.run_number }}" out/*.apk \
-            --title "Lifelog v${{ github.run_number }}" \
-            --notes "APK da installare sul telefono. Istruzioni nel README." --latest
+          # Crea la release già pubblicata (niente bozza: pubblicare una bozza
+          # dava errore 500 da GitHub), poi carica i file uno alla volta.
+          for i in 1 2 3 4; do
+            gh api "repos/${{ github.repository }}/releases" -f tag_name="$TAG" -f target_commitish="${{ github.sha }}" \
+              -f name="Lifelog $TAG" -f body="APK da installare sul telefono. Istruzioni nel README." \
+              -F draft=false -f make_latest=true && break
+            gh release view "$TAG" >/dev/null 2>&1 && break
+            sleep 10
+          done
+          ok=0
+          for i in 1 2 3 4; do gh release upload "$TAG" out/*.apk --clobber && ok=1 && break; sleep 10; done
+          [ "$ok" = 1 ] || exit 1
           for f in screens/*.png; do
             [ -f "$f" ] || continue
-            for i in 1 2 3; do gh release upload "v${{ github.run_number }}" "$f" --clobber && break; sleep 5; done
+            for i in 1 2 3; do gh release upload "$TAG" "$f" --clobber && break; sleep 5; done || true
           done
