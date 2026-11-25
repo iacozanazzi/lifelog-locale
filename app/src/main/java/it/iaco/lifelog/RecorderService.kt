@@ -96,19 +96,72 @@ class RecorderService : Service() {
             setReferenceCounted(false)
             acquire()
         }
-        thread = Thread({ loop() }, "lifelog-recorder").apply { start() }
+        thread = Thread({ supervise() }, "lifelog-recorder").apply { start() }
+        keepAlive = Thread({ watchCalls() }, "lifelog-calls").apply { isDaemon = true; start() }
+    }
+
+    @Volatile private var keepAlive: Thread? = null
+
+    private fun inCall(): Boolean {
+        val mode = getSystemService(android.media.AudioManager::class.java).mode
+        return mode == android.media.AudioManager.MODE_IN_CALL ||
+            mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+            mode == android.media.AudioManager.MODE_CALL_SCREENING
+    }
+
+    /**
+     * Durante una telefonata Android toglie il microfono alle altre app.
+     * Qui teniamo vivo il segnale di vita (così non sembra un blocco di Samsung)
+     * e alla fine segniamo il buco come "chiamata".
+     */
+    private fun watchCalls() {
+        val prefs = Prefs(this)
+        var callStart = 0L
+        while (running) {
+            val now = System.currentTimeMillis()
+            if (inCall()) {
+                if (callStart == 0L) callStart = now
+                prefs.lastHeartbeat = now
+                Live.speaking.value = false
+            } else if (callStart != 0L) {
+                if (now - callStart > 20_000) Db.get(this).insertGap(callStart, now, "chiamata")
+                callStart = 0L
+                prefs.lastHeartbeat = now
+            }
+            try { Thread.sleep(5_000) } catch (_: InterruptedException) { return }
+        }
+    }
+
+    /** Fa ripartire il microfono da solo se si interrompe (es. dopo una chiamata). */
+    private fun supervise() {
+        var failures = 0
+        while (running) {
+            val started = System.currentTimeMillis()
+            val reason = try { loop() } catch (e: Exception) { Log.e(TAG, "errore di registrazione", e); e.message ?: "errore" }
+            if (!running) break
+            if (System.currentTimeMillis() - started > 60_000) failures = 0
+            while (running && inCall()) SystemClock.sleep(2_000)
+            if (!running) break
+            failures++
+            if (failures == 4) {
+                Notifications.alert(this, "Il microfono non riparte", "Tocca per riprendere la registrazione. ($reason)")
+            }
+            SystemClock.sleep(if (failures < 4) 3_000L else 30_000L)
+        }
     }
 
     private fun stopRecording() {
         running = false
+        keepAlive?.interrupt(); keepAlive = null
         thread?.join(3000)
         thread = null
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
     }
 
+    /** Una sessione di registrazione. Ritorna quando il microfono si interrompe (o su richiesta). */
     @SuppressLint("MissingPermission")
-    private fun loop() {
+    private fun loop(): String {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val prefs = Prefs(this)
         val db = Db.get(this)
@@ -120,10 +173,8 @@ class RecorderService : Service() {
             maxOf(minBuf, sr * 2 * 2),
         )
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            Notifications.alert(this, "Microfono non disponibile", "Tocca per riprovare.")
-            running = false
-            stopSelf()
-            return
+            rec.release()
+            return "microfono non disponibile"
         }
         val vad = Vad(null, Models.vadConfig(this))
         val window = 512
@@ -151,13 +202,17 @@ class RecorderService : Service() {
         var segmentsToday = 0
 
         rec.startRecording()
+        var lastGoodRead = System.currentTimeMillis()
         try {
             while (running) {
                 val n = rec.read(shorts, 0, window)
                 if (n <= 0) {
+                    // Microfono tolto (chiamata, altra app): dopo 5 s lo ricreo da capo.
+                    if (System.currentTimeMillis() - lastGoodRead > 5_000) return "il microfono ha smesso di rispondere ($n)"
                     SystemClock.sleep(20)
                     continue
                 }
+                lastGoodRead = System.currentTimeMillis()
                 var allZero = true
                 for (i in 0 until n) {
                     val s = shorts[i]
@@ -216,18 +271,17 @@ class RecorderService : Service() {
                     TranscribeWorker.schedule(this)
                 }
             }
-            // Fermata richiesta: salva l'ultimo pezzo di parlato in corso.
-            vad.flush()
-            while (!vad.empty()) {
-                val seg = vad.front()
-                vad.pop()
-                val startMs = sessionStartMs + seg.start * 1000L / sr
-                saveSegment(db, startMs, startMs + seg.samples.size * 1000L / sr, seg.samples)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "errore di registrazione", e)
-            Notifications.alert(this, "Registrazione interrotta da un errore", "Tocca per riprendere. (${e.message})")
         } finally {
+            // Salva l'ultimo pezzo di parlato in corso, anche se il microfono si è interrotto.
+            try {
+                vad.flush()
+                while (!vad.empty()) {
+                    val seg = vad.front()
+                    vad.pop()
+                    val startMs = sessionStartMs + seg.start * 1000L / sr
+                    saveSegment(db, startMs, startMs + seg.samples.size * 1000L / sr, seg.samples)
+                }
+            } catch (e: Exception) { Log.w(TAG, "ultimo pezzo non salvato", e) }
             Live.level.value = 0f
             Live.speaking.value = false
             try { rec.stop() } catch (_: Exception) {}
@@ -235,6 +289,7 @@ class RecorderService : Service() {
             vad.release()
             if (!Prefs(this).recordingWanted) prefs.lastHeartbeat = 0L
         }
+        return "fermato"
     }
 
     private fun saveSegment(db: Db, startMs: Long, endMs: Long, samples: FloatArray) {
