@@ -72,8 +72,9 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    // Memoria: sonno e passi da Samsung Health (Health Connect, Apache-2.0)
-    implementation("androidx.health.connect:connect-client:1.1.0")
+    // Memoria: sonno e passi da Samsung Health (Health Connect, Apache-2.0).
+    // 1.1.0 stabile richiede compileSdk 36 e AGP 8.9: qui si resta su 35 / 8.7.
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha10")
 
     // Solo per generare le anteprime delle schermate (non finisce nell'app)
     testImplementation("junit:junit:4.13.2")
