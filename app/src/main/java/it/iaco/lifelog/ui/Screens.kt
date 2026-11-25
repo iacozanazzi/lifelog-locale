@@ -81,6 +81,9 @@ data class SettingsUi(
     val driveStatus: String,
     val version: String,
     val engines: List<EngineRow> = emptyList(),
+    val dataConfigured: Boolean = false,
+    val dataRepo: String = "iacozanazzi/lifelog-dati",
+    val dataStatus: String = "",
 )
 
 /** Un motore di trascrizione nella lista delle impostazioni. */
@@ -247,41 +250,24 @@ private fun PlayPause(listening: Boolean, onClick: () -> Unit) {
 // =============================================================== Giorni
 
 @Composable
-fun DaysScreen(days: List<DayRow>, onDay: (String) -> Unit) {
+fun DaysScreen(
+    days: List<DayRow>,
+    onDay: (String) -> Unit,
+    query: String = "",
+    hits: List<SearchHit> = emptyList(),
+    onQuery: (String) -> Unit = {},
+) {
     val c = Life.c
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp)) {
-        item { ScreenHeader(null, "Giorni"); Spacer(Modifier.height(14.dp)) }
-        if (days.isEmpty()) item {
-            Text("Ancora nessun giorno registrato. Avvia l'ascolto da Oggi.", style = Type.body, color = c.second)
-        }
-        items(days, key = { it.day }) { d ->
-            Column(Modifier.fillMaxWidth().clickable { onDay(d.day) }.padding(vertical = 16.dp)) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(d.title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
-                    Text(d.meta, style = Type.meta, color = c.second)
-                }
-                Spacer(Modifier.height(12.dp))
-                DayLine(d.spans, height = 6.dp)
-            }
-            Hairline()
-        }
-    }
-}
-
-// =============================================================== Cerca
-
-@Composable
-fun SearchScreen(query: String, hits: List<SearchHit>, onQuery: (String) -> Unit, onDay: (String) -> Unit) {
-    val c = Life.c
+    val searching = query.trim().length >= 2
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp)) {
         item {
-            ScreenHeader(null, "Cerca")
+            ScreenHeader(null, "Giorni")
             Spacer(Modifier.height(14.dp))
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fill)
                     .padding(horizontal = 14.dp, vertical = 13.dp)
             ) {
-                if (query.isEmpty()) Text("Parole, nomi, idee", style = Type.text.copy(fontWeight = FontWeight.Medium), color = c.second)
+                if (query.isEmpty()) Text("Cerca parole, nomi, idee", style = Type.text.copy(fontWeight = FontWeight.Medium), color = c.second)
                 BasicTextField(
                     value = query, onValueChange = onQuery, singleLine = true,
                     textStyle = Type.text.copy(color = c.text, fontWeight = FontWeight.Medium),
@@ -289,19 +275,166 @@ fun SearchScreen(query: String, hits: List<SearchHit>, onQuery: (String) -> Unit
                 )
             }
             Spacer(Modifier.height(10.dp))
-            when {
-                query.trim().length < 2 -> Text("Cerca in tutto quello che hai detto.", style = Type.meta, color = c.second)
-                hits.isEmpty() -> Text("Nessuna frase con \"${query.trim()}\".", style = Type.meta, color = c.second)
-                else -> Text(if (hits.size == 1) "1 frase" else "${hits.size} frasi", style = Type.meta, color = c.second)
+            if (searching) Text(
+                when (hits.size) { 0 -> "Nessuna frase con \"${query.trim()}\"."; 1 -> "1 frase"; else -> "${hits.size} frasi" },
+                style = Type.meta, color = c.second
+            )
+        }
+        if (searching) {
+            items(hits) { h ->
+                Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {
+                    Text(h.where, style = Type.time, color = c.second)
+                    Spacer(Modifier.height(3.dp))
+                    Text(highlight(h.text, query.trim(), c.accent), style = Type.body, color = c.text, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+                Hairline()
+            }
+        } else {
+            if (days.isEmpty()) item {
+                Text("Ancora nessun giorno registrato. Avvia l'ascolto da Oggi.", style = Type.body, color = c.second)
+            }
+            items(days, key = { it.day }) { d ->
+                Column(Modifier.fillMaxWidth().clickable { onDay(d.day) }.padding(vertical = 16.dp)) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(d.title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
+                        Text(d.meta, style = Type.meta, color = c.second)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    DayLine(d.spans, height = 6.dp)
+                }
+                Hairline()
             }
         }
-        items(hits) { h ->
-            Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {
-                Text(h.where, style = Type.time, color = c.second)
-                Spacer(Modifier.height(3.dp))
-                Text(highlight(h.text, query.trim(), c.accent), style = Type.body, color = c.text, maxLines = 4, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Ricerca a schermo intero (ora integrata in Giorni). */
+@Composable
+fun SearchScreen(query: String, hits: List<SearchHit>, onQuery: (String) -> Unit, onDay: (String) -> Unit) =
+    DaysScreen(emptyList(), onDay, query, hits, onQuery)
+
+// =============================================================== Ieri
+
+enum class AnState { NOT_CONFIGURED, MISSING, EMPTY, READY }
+
+data class Entry(val time: String, val text: String, val kind: String = "")
+
+data class YesterdayUi(
+    val dateLabel: String,
+    val state: AnState,
+    val note: String,
+    val giornata: String = "",
+    val sections: List<Pair<String, List<Entry>>> = emptyList(),
+    val tomorrow: List<String> = emptyList(),
+    val verify: List<Entry> = emptyList(),
+)
+
+@Composable
+fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit) {
+    val c = Life.c
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 40.dp)) {
+        item { ScreenHeader(s.dateLabel, "Ieri") }
+        when (s.state) {
+            AnState.NOT_CONFIGURED -> item {
+                Text("Ogni notte Claude legge la giornata e ti lascia qui il diario, le decisioni e gli impegni.", style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 18.dp))
+                Text("Per cominciare collega il repository dei dati in Opzioni.", style = Type.text, color = c.second, modifier = Modifier.padding(top = 14.dp))
+                TextAction("Apri Opzioni", onSetup, modifier = Modifier.padding(top = 8.dp))
             }
-            Hairline()
+            AnState.MISSING -> item {
+                Text("L'analisi di stanotte non è arrivata.", style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 18.dp))
+                if (s.note.isNotBlank()) Text(s.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 12.dp))
+                TextAction("Controlla di nuovo", onRefresh, modifier = Modifier.padding(top = 8.dp))
+            }
+            AnState.EMPTY -> item {
+                Text("Ieri hai parlato poco: niente da raccontare.", style = Type.lyric, color = c.second, modifier = Modifier.padding(top = 18.dp))
+            }
+            AnState.READY -> {
+                item {
+                    Text(s.giornata, style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 18.dp))
+                    if (s.note.isNotBlank()) Text(s.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 10.dp))
+                }
+                s.sections.filter { it.second.isNotEmpty() }.forEach { (title, entries) ->
+                    item { Text(title, style = Type.section, color = c.text, modifier = Modifier.padding(top = 32.dp, bottom = 4.dp)) }
+                    items(entries) { e -> EntryRow(e, c.text) }
+                }
+                if (s.tomorrow.isNotEmpty()) {
+                    item { Text("Per oggi", style = Type.section, color = c.text, modifier = Modifier.padding(top = 32.dp, bottom = 4.dp)) }
+                    items(s.tomorrow.withIndex().toList()) { (i, t) -> EntryRow(Entry("${i + 1}", t), c.text) }
+                }
+                if (s.verify.isNotEmpty()) {
+                    item {
+                        Text("Da verificare", style = Type.section, color = c.text, modifier = Modifier.padding(top = 32.dp))
+                        Text("Parole che la trascrizione potrebbe aver capito male.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp))
+                    }
+                    items(s.verify) { e -> EntryRow(e, c.second) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EntryRow(e: Entry, color: Color) {
+    val c = Life.c
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
+        Text(e.time, style = Type.time, color = c.second, modifier = Modifier.width(52.dp).padding(top = 3.dp))
+        Column(Modifier.weight(1f)) {
+            Text(e.text, style = Type.text, color = color)
+            if (e.kind.isNotBlank()) Text(e.kind, style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+// =============================================================== Impegni
+
+data class TodoItem(val id: String, val text: String, val meta: String, val done: Boolean, val age: String = "")
+
+data class TodoUi(val configured: Boolean, val mine: List<TodoItem>, val theirs: List<TodoItem>, val note: String)
+
+@Composable
+fun TodoScreen(s: TodoUi, onToggle: (String, Boolean) -> Unit, onSetup: () -> Unit) {
+    val c = Life.c
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 40.dp)) {
+        item { ScreenHeader(null, "Impegni") }
+        if (!s.configured) item {
+            Text("Le cose che prometti, e quelle che ti promettono, raccolte da Claude dalle tue conversazioni.", style = Type.lyric, color = c.text, modifier = Modifier.padding(top = 18.dp))
+            TextAction("Collega in Opzioni", onSetup, modifier = Modifier.padding(top = 12.dp))
+        } else {
+            if (s.note.isNotBlank()) item { Text(s.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 6.dp)) }
+            listOf("Devo io" to s.mine, "Mi devono" to s.theirs).forEach { (title, list) ->
+                item {
+                    Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
+                        Text(title, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
+                        val open = list.count { !it.done }
+                        Text(if (open == 1) "1 aperto" else "$open aperti", style = Type.meta, color = c.second)
+                    }
+                }
+                if (list.isEmpty()) item { Text("Niente.", style = Type.text, color = c.second, modifier = Modifier.padding(vertical = 10.dp)) }
+                items(list, key = { title + it.id }) { t ->
+                    TodoRow(t) { onToggle(t.id, !t.done) }
+                    Hairline()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoRow(t: TodoItem, onClick: () -> Unit) {
+    val c = Life.c
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 14.dp)) {
+        Box(
+            Modifier.padding(top = 1.dp, end = 14.dp).size(24.dp).clip(CircleShape)
+                .background(if (t.done) c.accent else c.fill),
+            contentAlignment = Alignment.Center
+        ) { if (t.done) Text("✓", style = Type.time, color = c.onText) }
+        Column(Modifier.weight(1f)) {
+            Text(
+                t.text, style = Type.text.copy(textDecoration = if (t.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null),
+                color = if (t.done) c.faint else c.text
+            )
+            Text(t.meta, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 3.dp))
+            if (t.age.isNotBlank() && !t.done) Text(t.age, style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }
@@ -380,6 +513,10 @@ fun SettingsScreen(
     onSetup: () -> Unit,
     onEngine: (String) -> Unit = {},
     onCompare: () -> Unit = {},
+    onDataSave: (token: String, repo: String) -> Unit = { _, _ -> },
+    onDataSend: () -> Unit = {},
+    onDataTest: () -> Unit = {},
+    onDataDisconnect: () -> Unit = {},
 ) {
     val c = Life.c
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 32.dp)) {
@@ -396,6 +533,9 @@ fun SettingsScreen(
                 Hairline()
             }
         }
+
+        item { Group("Dati per Claude") }
+        item { DataGroup(s, onDataSave, onDataSend, onDataTest, onDataDisconnect) }
 
         item { Group("Google Drive") }
         item {
@@ -452,6 +592,54 @@ fun SettingsScreen(
             )
             Text("Lifelog ${s.version}", style = Type.meta, color = c.faint, modifier = Modifier.padding(top = 10.dp))
         }
+    }
+}
+
+@Composable
+private fun DataGroup(
+    s: SettingsUi,
+    onSave: (String, String) -> Unit,
+    onSend: () -> Unit,
+    onTest: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
+    val c = Life.c
+    if (!s.dataConfigured) {
+        var token by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+        var repo by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(s.dataRepo) }
+        Text(
+            "Ogni sera invia il testo della giornata (mai l'audio) al tuo repository GitHub privato. Di notte Claude lo analizza e la mattina trovi il risultato in Ieri e Impegni.",
+            style = Type.text, color = c.second
+        )
+        Field("Token GitHub", token, secret = true) { token = it }
+        Field("Repository", repo) { repo = it }
+        SolidButton("Salva e prova", { onSave(token, repo) }, modifier = Modifier.padding(top = 14.dp), enabled = token.isNotBlank())
+        if (s.dataStatus.isNotBlank()) Text(s.dataStatus, style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 8.dp))
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(c.accent); Spacer(Modifier.width(9.dp))
+            Text(s.dataRepo, style = Type.rowTitle, color = c.text)
+        }
+        if (s.dataStatus.isNotBlank()) Text(s.dataStatus, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.padding(top = 4.dp)) {
+            TextAction("Invia ora", onSend)
+            TextAction("Prova", onTest)
+            TextAction("Scollega", onDisconnect, color = c.second)
+        }
+    }
+}
+
+@Composable
+private fun Field(label: String, value: String, secret: Boolean = false, onChange: (String) -> Unit) {
+    val c = Life.c
+    Text(label, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(c.fill).padding(horizontal = 14.dp, vertical = 13.dp)) {
+        BasicTextField(
+            value = value, onValueChange = onChange, singleLine = true,
+            textStyle = Type.text.copy(color = c.text, fontWeight = FontWeight.Medium),
+            cursorBrush = SolidColor(c.accent), modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        )
     }
 }
 
@@ -630,7 +818,7 @@ private fun Step(n: Int, title: String, done: Boolean, desc: String, action: @Co
 
 // =============================================================== Barra in basso
 
-enum class Tab(val label: String) { TODAY("Oggi"), DAYS("Giorni"), SEARCH("Cerca"), SETTINGS("Impostazioni") }
+enum class Tab(val label: String) { TODAY("Oggi"), YESTERDAY("Ieri"), TODO("Impegni"), DAYS("Giorni"), SETTINGS("Opzioni") }
 
 @Composable
 fun BottomBar(current: Tab, onSelect: (Tab) -> Unit) {

@@ -85,7 +85,7 @@ class ScreenshotTest {
         )
     }
 
-    @Test fun search() = shot("7-cerca", tab = Tab.SEARCH) {
+    @Test fun search() = shot("7-cerca", tab = Tab.DAYS) {
         SearchScreen(
             "giulia",
             listOf(
@@ -124,6 +124,45 @@ class ScreenshotTest {
                     EngineRow("GOOGLE", "Google sul telefono", "Il riconoscimento vocale di Google, offline.", "Se manca il pacchetto italiano offline, lo scarica Google da solo al primo uso.", selected = false, ready = true),
                 )),
             {}, {}, {}, {}, {}, {}, {}, {}
+        )
+    }
+
+    @Test fun yesterday() = shot("9-ieri", tab = Tab.YESTERDAY) {
+        YesterdayScreen(
+            YesterdayUi(
+                dateLabel = "Martedì 24 novembre", state = AnState.READY,
+                note = "372 minuti di parlato, analisi delle 03:12",
+                giornata = "Mattina a lezione, pranzo con Giulia, sopralluogo al Rosa per la serata del 6.",
+                sections = listOf(
+                    "Seral" to listOf(
+                        Entry("16:40", "Deciso: la serata del 6 dicembre si fa al Rosa.", "Decisione"),
+                        Entry("17:05", "Marco aspetta il contatto del fonico.", "Impegno"),
+                    ),
+                    "Università" to listOf(Entry("10:15", "Macro: la domanda aggregata dipende dalle aspettative, non solo dal reddito corrente.")),
+                    "Persone" to listOf(Entry("13:20", "Giulia parte per il Portogallo a gennaio, vuole consigli sul treno.")),
+                ),
+                tomorrow = listOf("Testo del post a Tommaso", "Chiamare Marco per il contratto"),
+                verify = listOf(Entry("16:44", "\"Barbieri\" forse \"Barbara\"")),
+            ),
+            {}, {}
+        )
+    }
+
+    @Test fun todo() = shot("10-impegni", tab = Tab.TODO) {
+        TodoScreen(
+            TodoUi(
+                configured = true,
+                mine = listOf(
+                    TodoItem("1", "Mandare a Marco il contatto del fonico", "Marco, detto ieri alle 17:05", done = false),
+                    TodoItem("2", "Rispondere a Tommaso sul post", "Tommaso, detto martedì 14 alle 11:20", done = false, age = "Aperto da 11 giorni"),
+                    TodoItem("3", "Prenotare il treno delle 8:20", "detto lunedì 23 alle 19:02", done = true),
+                ),
+                theirs = listOf(
+                    TodoItem("4", "Giulia mi manda le foto del locale", "Giulia, detto ieri alle 13:40", done = false),
+                ),
+                note = "",
+            ),
+            { _, _ -> }, {}
         )
     }
 

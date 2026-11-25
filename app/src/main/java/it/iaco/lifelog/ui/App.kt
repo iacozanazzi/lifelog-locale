@@ -38,6 +38,10 @@ import androidx.core.content.ContextCompat
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import it.iaco.lifelog.AsrFactory
+import it.iaco.lifelog.data.Assistant
+import it.iaco.lifelog.data.GitHub
+import it.iaco.lifelog.data.Assistant.fetchStatus
+import it.iaco.lifelog.data.Assistant.uploadStatus
 import it.iaco.lifelog.CrashLog
 import it.iaco.lifelog.Engine
 import it.iaco.lifelog.Pcm
@@ -85,7 +89,11 @@ fun App(resumeTick: Int) {
             delay(2000); tick++
         }
     }
-    LaunchedEffect(resumeTick) { tick++ }
+    LaunchedEffect(resumeTick) {
+        tick++
+        Assistant.fetchSoon(ctx) // controlla se è arrivata l'analisi di stanotte
+    }
+    LaunchedEffect(Unit) { Assistant.schedule(ctx) }
     BackHandler(enabled = route != Route.Main || tab != Tab.TODAY) {
         if (route != Route.Main) route = Route.Main else tab = Tab.TODAY
     }
@@ -108,8 +116,9 @@ fun App(resumeTick: Int) {
                         Route.Compare -> CompareRoute { route = Route.Main }
                         Route.Main -> when (tab) {
                             Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) })
+                            Tab.YESTERDAY -> YesterdayRoute(tick, onSetup = { tab = Tab.SETTINGS })
+                            Tab.TODO -> TodoRoute(tick, onSetup = { tab = Tab.SETTINGS })
                             Tab.DAYS -> DaysRoute(tick, onDay = { route = Route.Day(it) })
-                            Tab.SEARCH -> SearchRoute(onDay = { route = Route.Day(it) })
                             Tab.SETTINGS -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare })
                         }
                     }
@@ -256,6 +265,8 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
     var days by remember { mutableStateOf(emptyList<DayRow>()) }
+    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
     LaunchedEffect(tick) {
         days = withContext(Dispatchers.IO) {
             db.days().take(120).map { d ->
@@ -267,17 +278,6 @@ private fun DaysRoute(tick: Int, onDay: (String) -> Unit) {
             }
         }
     }
-    DaysScreen(days, onDay)
-}
-
-// =============================================================== Cerca
-
-@Composable
-private fun SearchRoute(onDay: (String) -> Unit) {
-    val ctx = LocalContext.current
-    val db = remember { Db.get(ctx) }
-    var query by remember { mutableStateOf("") }
-    var hits by remember { mutableStateOf(emptyList<SearchHit>()) }
     LaunchedEffect(query) {
         val q = query.trim()
         if (q.length >= 2) delay(250)
@@ -288,7 +288,81 @@ private fun SearchRoute(onDay: (String) -> Unit) {
             }
         }
     }
-    SearchScreen(query, hits, onQuery = { query = it }, onDay = onDay)
+    DaysScreen(days, onDay, query, hits, onQuery = { query = it })
+}
+
+// =============================================================== Ieri e Impegni
+
+@Composable
+private fun YesterdayRoute(tick: Int, onSetup: () -> Unit) {
+    val ctx = LocalContext.current
+    val ui = remember(tick) {
+        val day = Assistant.yesterday()
+        val label = LocalDate.parse(day).format(DateTimeFormatter.ofPattern("EEEE d MMMM", ITA)).replaceFirstChar { it.uppercase() }
+        val a = Assistant.analysis(ctx, day)
+        when {
+            !Assistant.isConfigured(ctx) -> YesterdayUi(label, AnState.NOT_CONFIGURED, "")
+            a == null -> YesterdayUi(label, AnState.MISSING, ctx.fetchStatus)
+            a.vuoto -> YesterdayUi(label, AnState.EMPTY, "")
+            else -> YesterdayUi(
+                dateLabel = label, state = AnState.READY,
+                note = "${a.parlatoMin} minuti di parlato" + generatedAt(a.generato),
+                giornata = a.giornata,
+                sections = a.sezioni.map { sec -> sec.titolo to sec.voci.map { Entry(it.ora, it.testo, kindLabel(it.tipo)) } },
+                tomorrow = a.domani,
+                verify = a.daVerificare.map { Entry(it.ora, it.testo) },
+            )
+        }
+    }
+    YesterdayScreen(ui, onSetup = onSetup, onRefresh = {
+        Assistant.fetchSoon(ctx)
+        Toast.makeText(ctx, "Controllo…", Toast.LENGTH_SHORT).show()
+    })
+}
+
+private fun kindLabel(t: String) = when (t.lowercase()) {
+    "decisione" -> "Decisione"
+    "impegno" -> "Impegno"
+    "idea" -> "Idea"
+    "domanda" -> "Domanda aperta"
+    else -> ""
+}
+
+private fun generatedAt(iso: String) = try {
+    ", analisi delle " + java.time.OffsetDateTime.parse(iso).atZoneSameInstant(zone).format(DateTimeFormatter.ofPattern("HH:mm"))
+} catch (_: Exception) { "" }
+
+@Composable
+private fun TodoRoute(tick: Int, onSetup: () -> Unit) {
+    val ctx = LocalContext.current
+    var version by remember { mutableIntStateOf(0) }
+    val ui = remember(tick, version) {
+        val today = LocalDate.now(zone)
+        val list = Assistant.commitments(ctx)
+        fun item(cm: Assistant.Commitment): TodoItem {
+            val src = runCatching { LocalDate.parse(cm.fonteGiorno) }.getOrNull()
+            val ageDays = src?.let { java.time.temporal.ChronoUnit.DAYS.between(it, today) } ?: 0
+            val meta = buildList {
+                if (cm.persona.isNotBlank()) add(cm.persona)
+                if (src != null) add("detto ${dayTitle(cm.fonteGiorno).lowercase(ITA)}" + (if (cm.fonteOra.isNotBlank()) " alle ${cm.fonteOra}" else ""))
+                cm.scadenza?.let { add("entro ${runCatching { dayTitle(it).lowercase(ITA) }.getOrDefault(it)}") }
+            }.joinToString(", ")
+            val age = when {
+                cm.stato == "fermo" -> "Fermo da più di due settimane"
+                ageDays > 7 -> "Aperto da $ageDays giorni"
+                else -> ""
+            }
+            return TodoItem(cm.id, cm.testo, meta, done = cm.stato == "fatto", age = age)
+        }
+        val sorted = list.sortedWith(compareBy<Assistant.Commitment>({ it.stato == "fatto" }, { it.fonteGiorno }))
+        TodoUi(
+            configured = Assistant.isConfigured(ctx),
+            mine = sorted.filter { it.chi != "altro" }.map(::item),
+            theirs = sorted.filter { it.chi == "altro" }.map(::item),
+            note = if (list.isEmpty() && Assistant.isConfigured(ctx)) "Ancora nessun impegno: arrivano dopo la prima analisi notturna." else "",
+        )
+    }
+    TodoScreen(ui, onToggle = { id, done -> Assistant.setDone(ctx, id, done); version++ }, onSetup = onSetup)
 }
 
 // =============================================================== Giorno
@@ -341,7 +415,8 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
         .getWorkInfosForUniqueWorkFlow(ModelSetupWorker.NAME_WHISPER)
         .collectAsState(initial = emptyList())
     val wInfo = whisperWork.firstOrNull()
-    val ui = remember(tick, version, wInfo?.state, wInfo?.progress) {
+    var dataMsg by remember { mutableStateOf("") }
+    val ui = remember(tick, version, wInfo?.state, wInfo?.progress, dataMsg) {
         SettingsUi(
             onlyCharging = prefs.onlyWhileCharging,
             waitCharge = prefs.minChargePercent > 0,
@@ -354,6 +429,9 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
             version = try {
                 ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
             } catch (_: Exception) { "" },
+            dataConfigured = Assistant.isConfigured(ctx),
+            dataRepo = Assistant.repo(ctx),
+            dataStatus = listOf(ctx.uploadStatus, ctx.fetchStatus).filter { it.isNotBlank() }.joinToString("\n").ifEmpty { dataMsg },
             engines = Engine.entries.map { e ->
                 val ready = AsrFactory.ready(ctx, e)
                 val state = when {
@@ -419,6 +497,31 @@ private fun SettingsRoute(tick: Int, onSetup: () -> Unit, onCompare: () -> Unit)
             version++
         },
         onCompare = onCompare,
+        onDataSave = { token, repo ->
+            dataMsg = "Provo la connessione…"
+            scope.launch(Dispatchers.IO) {
+                val msg = try {
+                    val probe = GitHub(token.trim(), repo.trim().ifEmpty { Assistant.DEFAULT_REPO })
+                    probe.check().also {
+                        Assistant.configure(ctx, token, repo)
+                        Assistant.uploadSoon(ctx)
+                        Assistant.fetchSoon(ctx)
+                    } + ". Invio i giorni in corso."
+                } catch (e: Exception) { "Non funziona: ${e.message}" }
+                withContext(Dispatchers.Main) { dataMsg = msg; version++ }
+            }
+        },
+        onDataSend = {
+            Assistant.uploadSoon(ctx)
+            Toast.makeText(ctx, "Invio in corso…", Toast.LENGTH_SHORT).show()
+        },
+        onDataTest = {
+            scope.launch(Dispatchers.IO) {
+                val msg = try { Assistant.check(ctx) } catch (e: Exception) { "Non funziona: ${e.message}" }
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show() }
+            }
+        },
+        onDataDisconnect = { Assistant.disconnect(ctx); dataMsg = ""; version++ },
     )
 }
 
