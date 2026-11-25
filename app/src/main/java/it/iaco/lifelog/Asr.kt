@@ -101,6 +101,7 @@ class GoogleAsr(private val ctx: Context) : Asr {
                     override fun onBufferReceived(buffer: ByteArray?) {}
                     override fun onEndOfSpeech() {}
                     override fun onEvent(eventType: Int, params: Bundle?) {}
+                    override fun onPartialResults(partialResults: Bundle?) {}
                 })
                 r.startListening(intent().apply {
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
