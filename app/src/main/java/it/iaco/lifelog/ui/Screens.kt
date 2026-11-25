@@ -120,7 +120,8 @@ data class SetupUi(
     val downloadError: String,
 )
 
-private val side = 22.dp
+/** Margine laterale di tutte le schermate. */
+val side = 22.dp
 
 // =============================================================== Oggi
 
@@ -514,7 +515,7 @@ fun YesterdayScreen(s: YesterdayUi, onSetup: () -> Unit, onRefresh: () -> Unit, 
 }
 
 @Composable
-private fun EntryRow(e: Entry, color: Color) {
+fun EntryRow(e: Entry, color: Color) {
     val c = Life.c
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
         Text(e.time, style = Type.time, color = c.second, modifier = Modifier.width(52.dp).padding(top = 3.dp))
