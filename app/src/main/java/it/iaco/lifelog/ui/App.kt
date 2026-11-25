@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import it.iaco.lifelog.CrashLog
 import it.iaco.lifelog.Db
 import it.iaco.lifelog.DaySummary
 import it.iaco.lifelog.Exporter
@@ -144,6 +145,8 @@ private fun HomeScreen(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Spacer(Modifier.height(8.dp)); Text("Lifelog", style = MaterialTheme.typography.headlineMedium) }
 
+        item { CrashCard() }
+
         item { RecordingCard(tick, onSetup) }
 
         item {
@@ -154,7 +157,7 @@ private fun HomeScreen(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit) 
                     val b = remember(tick) { Throttle.battery(ctx) }
                     Text("Da trascrivere: $pending pezzi (${pendingSec / 60} min di parlato)")
                     Text(
-                        "Batteria ${b.percent}% · %.1f°C · %s".format(b.tempC, if (b.plugged) "in carica" else "non in carica"),
+                        "Batteria %d%% · %.1f°C · %s".format(b.percent, b.tempC, if (b.plugged) "in carica" else "non in carica"),
                         style = MaterialTheme.typography.bodySmall
                     )
                     val status = remember(tick) { prefs.transcribeStatus }
@@ -510,6 +513,36 @@ private fun Step(title: String, done: Boolean?, content: @Composable () -> Unit)
             }
             if (done != true) content()
             else Spacer(Modifier.width(0.dp))
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Errori
+
+/** Se l'app si è chiusa per un errore, lo mostra e permette di inviarlo. */
+@Composable
+private fun CrashCard() {
+    val ctx = LocalContext.current
+    var report by remember { mutableStateOf(CrashLog.read(ctx)) }
+    val r = report ?: return
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("L'app si è chiusa per un errore", fontWeight = FontWeight.Bold)
+            Text("Invialo a Claude: tocca Condividi e incolla il testo nella chat.", style = MaterialTheme.typography.bodySmall)
+            Text(r.lineSequence().take(4).joinToString("\n"), style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, r)
+                    }
+                    ctx.startActivity(Intent.createChooser(send, "Condividi errore"))
+                }) { Text("Condividi") }
+                OutlinedButton(onClick = { CrashLog.clear(ctx); report = null }) { Text("Chiudi") }
+            }
         }
     }
 }
