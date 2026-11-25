@@ -16,7 +16,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.health.connect.client.PermissionController
+import it.iaco.lifelog.Db
 import it.iaco.lifelog.data.Assistant
+import it.iaco.lifelog.people.Speakers
 import it.iaco.lifelog.memory.Health
 import it.iaco.lifelog.memory.Memory
 import it.iaco.lifelog.memory.Places
@@ -246,7 +248,13 @@ fun rememberDayMemory(day: String, refresh: Any?): DayMemoryState {
 
 private fun dayMemoryUi(ctx: Context, day: String): DayMemoryUi {
     val commitments = Assistant.commitments(ctx).filter { it.fonteGiorno == day && it.persona.isNotBlank() }
+    val voices = runCatching { Speakers.voiceMap(ctx) }.getOrDefault(emptyMap())
+    val segs = if (voices.isEmpty()) emptyList() else runCatching { Db.get(ctx).segmentsOfDay(day) }.getOrDefault(emptyList())
     val stays = Places.stays(ctx, day).map { s ->
+        // Voci riconosciute che hanno parlato durante la sosta (non Iaco, non le voci incerte).
+        val heard = segs.filter { it.startMs in s.fromMs..s.toMs }
+            .map { Speakers.label(it.voice, voices) }
+            .filter { it != "?" && it != Speakers.ME_NAME }
         val from = Places.clock(s.fromMs)
         val to = Places.clock(s.toMs)
         val people = commitments.filter { c ->
@@ -254,7 +262,7 @@ private fun dayMemoryUi(ctx: Context, day: String): DayMemoryUi {
                 val t = LocalTime.parse(c.fonteOra.padStart(5, '0'))
                 !t.isBefore(LocalTime.parse(from.padStart(5, '0'))) && !t.isAfter(LocalTime.parse(to.padStart(5, '0')))
             }.getOrDefault(false)
-        }.map { it.persona.trim() }.distinct()
+        }.map { it.persona.trim() }.let { heard + it }.distinct().take(6)
         StayRow("$from–$to", s.place?.nome, people, s.lat, s.lon)
     }
     return DayMemoryUi(health = healthLine(Health.day(ctx, day)), stays = stays)
