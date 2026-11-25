@@ -65,6 +65,8 @@ data class TodayUi(
     val crash: String?,
     /** Il riassunto di ieri fatto da Claude, mostrato in cima la mattina. */
     val brief: Brief? = null,
+    /** Promemoria sulle persone (thread Persone): chi vedi oggi, compleanni, chi non senti da tempo. */
+    val people: List<PeopleTodayRow> = emptyList(),
 )
 
 data class Brief(val text: String, val todos: List<TodoItem>, val more: Int = 0)
@@ -137,6 +139,7 @@ fun TodayScreen(
     onSettings: () -> Unit = {},
     onToggleTodo: (String, Boolean) -> Unit = { _, _ -> },
     onOpenYesterday: () -> Unit = {},
+    onPerson: (String) -> Unit = {},
 ) {
     val c = Life.c
     Column(Modifier.fillMaxSize()) {
@@ -178,6 +181,8 @@ fun TodayScreen(
                     }
                 }
             }
+
+            if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
 
             s.crash?.let {
                 item {
@@ -397,6 +402,8 @@ fun SearchScreen(
     onQuery: (String) -> Unit,
     onDay: (String) -> Unit,
     people: List<String> = emptyList(),
+    onPerson: (String) -> Unit = onQuery,
+    onPeople: () -> Unit = {},
 ) {
     val c = Life.c
     val searching = query.trim().length >= 2
@@ -426,10 +433,11 @@ fun SearchScreen(
                 )
                 people.isNotEmpty() -> {
                     Text("Persone", style = Type.section, color = c.text, modifier = Modifier.padding(top = 18.dp, bottom = 10.dp))
-                    FlowChips(people) { onQuery(it) }
+                    FlowChips(people) { onPerson(it) }
                 }
                 else -> Text("Cerca in tutto quello che hai detto.", style = Type.meta, color = c.second)
             }
+            if (!searching) NavRow("Persone e voci", onClick = onPeople)
         }
         if (searching) items(hits) { h ->
             Column(Modifier.fillMaxWidth().clickable { onDay(h.day) }.padding(vertical = 14.dp)) {

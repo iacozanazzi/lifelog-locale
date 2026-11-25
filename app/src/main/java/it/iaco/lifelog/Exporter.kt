@@ -9,25 +9,26 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /** Un paragrafo = pezzi di parlato consecutivi, separati da meno di 60 secondi. */
-data class Paragraph(val startMs: Long, val endMs: Long, val text: String)
+data class Paragraph(val startMs: Long, val endMs: Long, val text: String, val voice: String? = null)
 
 object Exporter {
     private const val JOIN_GAP_MS = 60_000L
 
-    fun paragraphs(segments: List<Segment>): List<Paragraph> {
+    /** [byVoice] (thread Persone): un paragrafo nuovo quando cambia chi parla. */
+    fun paragraphs(segments: List<Segment>, byVoice: Boolean = false): List<Paragraph> {
         val out = mutableListOf<Paragraph>()
         var cur: Paragraph? = null
         for (s in segments) {
             val t = s.text?.trim().orEmpty()
             if (t.isEmpty()) continue
             val c = cur
-            cur = if (c != null && s.startMs - c.endMs < JOIN_GAP_MS &&
+            cur = if (c != null && s.startMs - c.endMs < JOIN_GAP_MS && (!byVoice || c.voice == s.voice) &&
                 Db.dayOf(s.startMs) == Db.dayOf(c.startMs)
             ) {
                 c.copy(endMs = s.endMs, text = c.text + " " + t)
             } else {
                 c?.let { out += it }
-                Paragraph(s.startMs, s.endMs, t)
+                Paragraph(s.startMs, s.endMs, t, s.voice)
             }
         }
         cur?.let { out += it }
