@@ -146,7 +146,7 @@ object Assistant {
         val arr = JSONArray()
         st.keys().forEach { id -> arr.put(JSONObject(st.getJSONObject(id).toString()).put("id", id)) }
         return JSONObject().put("aggiornato", now()).put("impegni", arr)
-            .put("abitudini", Memory.marksJson(ctx))
+            .put("abitudini", runCatching { Memory.marksJson(ctx) }.getOrDefault(JSONArray()))
             .also { Briefing.addState(ctx, it) }
             .also { o -> runCatching { People.stateFields(ctx, o) } }
     }

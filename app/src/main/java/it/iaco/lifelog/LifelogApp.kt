@@ -8,6 +8,7 @@ class LifelogApp : Application() {
         super.onCreate()
         CrashLog.install(this)
         Notifications.createChannels(this)
-        Places.schedule(this)
+        // Un errore dei luoghi non deve mai impedire all'app (e alla registrazione) di partire.
+        runCatching { Places.schedule(this) }
     }
 }
