@@ -484,8 +484,17 @@ private fun SetupScreen(tick: Int, onDone: () -> Unit) {
             color = MaterialTheme.colorScheme.error
         )
 
-        Button(onClick = onDone, enabled = mic && vad, modifier = Modifier.fillMaxWidth()) {
-            Text(if (parakeet) "Fatto" else "Continua (il modello finisce di scaricarsi da solo)")
+        // Mai bloccare: la schermata principale mostra comunque cosa manca.
+        val missing = buildList {
+            if (!mic) add("permesso microfono (passo 1)")
+            if (!vad || !parakeet) add("modello (passo 2, può finire di scaricarsi da solo)")
+            if (!battery) add("restrizioni batteria (passo 3)")
+        }
+        if (missing.isNotEmpty()) {
+            Text("Manca ancora: " + missing.joinToString(", "), style = MaterialTheme.typography.bodySmall)
+        }
+        Button(onClick = onDone, modifier = Modifier.fillMaxWidth()) {
+            Text(if (missing.isEmpty()) "Fatto" else "Continua lo stesso")
         }
         Spacer(Modifier.height(24.dp))
     }
