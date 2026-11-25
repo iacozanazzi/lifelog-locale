@@ -453,19 +453,22 @@ private fun SetupScreen(tick: Int, onDone: () -> Unit) {
             }) { Text("Togli le restrizioni batteria") }
         }
 
-        Step("4. Impostazioni Samsung (a mano, 2 minuti)", null) {
-            Text(
-                "a) Batteria dell'app su \"Senza restrizioni\":\n" +
-                    "   Info app → Batteria → Senza restrizioni."
-            )
+        Step("4. Controllo finale Samsung (facoltativo)", null) {
+            if (battery) {
+                Text(
+                    "Fatto: Lifelog è già \"Senza restrizioni\" (lo hai concesso al passo 3). " +
+                        "Per questo Samsung NON la mostra nell'elenco \"App mai in sospensione\": " +
+                        "quell'elenco propone solo le app ancora con restrizioni. Va bene così, non serve altro."
+                )
+            } else {
+                Text("Se il passo 3 non ha funzionato, fallo a mano: Info app → Batteria → Senza restrizioni.")
+            }
             OutlinedButton(onClick = {
                 tryStart(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
-            }) { Text("Apri Info app") }
+            }) { Text("Apri Info app per controllare") }
             Text(
-                "b) Aggiungi Lifelog alle \"App mai in sospensione\":\n" +
-                    "   Impostazioni → Batteria (su One UI 6: Assistenza dispositivo → Batteria) → " +
-                    "Limiti utilizzo in background → App mai in sospensione → + → Lifelog.\n" +
-                    "c) Nella stessa pagina spegni \"Metti in sospensione le app inutilizzate\"."
+                "Consigliato: in Impostazioni → Batteria → Limiti utilizzo in background " +
+                    "(su One UI 6: Assistenza dispositivo → Batteria) spegni \"Metti in sospensione le app inutilizzate\"."
             )
             OutlinedButton(onClick = { openSamsungBattery(ctx) }) { Text("Apri impostazioni batteria") }
             Text(
