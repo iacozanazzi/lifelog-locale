@@ -65,7 +65,7 @@ fun TodayCheckRow(text: String, meta: String, done: Boolean, first: Boolean, onC
     val c = Life.c
     if (!first) Hairline(Modifier.padding(start = 36.dp))
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp), verticalAlignment = Alignment.Top) {
-        Check(done)
+        Check(done, onCard = true)
         Column(Modifier.padding(start = 12.dp, top = 1.dp).weight(1f)) {
             Text(
                 text, style = Type.text.copy(fontSize = 17.sp, textDecoration = if (done) TextDecoration.LineThrough else null),
@@ -78,16 +78,16 @@ fun TodayCheckRow(text: String, meta: String, done: Boolean, first: Boolean, onC
 
 /** Riga con azioni in fila sotto (bozze da mandare, date da mettere in calendario). */
 @Composable
-fun TodayActionRow(title: String, meta: String, preview: String?, first: Boolean, actions: List<Triple<String, () -> Unit, Boolean>>) {
+fun TodayActionRow(icon: String, title: String, meta: String, preview: String?, first: Boolean, actions: List<Triple<String, () -> Unit, Boolean>>) {
     val c = Life.c
     if (!first) Hairline(Modifier.padding(start = 36.dp))
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
-        Text("✎", style = Type.rowTitle, color = c.second, modifier = Modifier.width(36.dp))
+        Text(icon, style = Type.rowTitle, color = c.second, modifier = Modifier.width(36.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = Type.text.copy(fontSize = 17.sp), color = c.text)
             if (meta.isNotBlank()) Text(meta, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 1.dp))
             if (!preview.isNullOrBlank()) Text(
-                "«$preview»", style = Type.meta, color = c.second, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                preview, style = Type.meta, color = c.second, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 4.dp)
             )
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {

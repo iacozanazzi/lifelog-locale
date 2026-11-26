@@ -223,7 +223,7 @@ fun TodayScreen(
                     val f = first; first = false
                     item("bozza-${d.id}") {
                         TodayActionRow(
-                            "Messaggio pronto: ${d.to.replaceFirstChar { it.lowercase() }}", d.source, d.text, f,
+                            "✎", "Messaggio per ${d.to.removePrefix("A ").removePrefix("a ")}, già scritto", d.source, "«${d.text}»", f,
                             listOf(
                                 Triple("Invia…", { briefingActions.onSendDraft(d.id) }, true),
                                 Triple("Copia", { briefingActions.onCopyDraft(d.id) }, true),
@@ -236,7 +236,7 @@ fun TodayScreen(
                     val f = first; first = false
                     item("prop-${p.id}") {
                         TodayActionRow(
-                            "In calendario: ${p.title}", p.whenLabel, p.source, f,
+                            "+", "Da mettere in calendario: ${p.title}", p.whenLabel, p.source, f,
                             listOf(
                                 Triple("Aggiungi", { briefingActions.onAddEvent(p.id) }, true),
                                 Triple("Non serve", { briefingActions.onSkipEvent(p.id) }, false),
@@ -277,7 +277,10 @@ fun TodayScreen(
                 item("occhio") { TodaySection("Da tenere d'occhio") }
             }
             item("aree") { cards() }
-            s.people.forEachIndexed { i, r ->
+            // Chi è già in "Prossimo" o in agenda non si ripete qui.
+            val seen = b?.agenda.orEmpty().flatMap { e -> e.people.map { it.name.lowercase() } }.toSet() +
+                nextPrep?.people.orEmpty().map { it.name.lowercase() }
+            s.people.filter { it.name.lowercase() !in seen }.forEachIndexed { i, r ->
                 item("p-${r.slug}") { WatchRow("Persone", r.text, r.detail.firstOrNull().orEmpty()) { onPerson(r.slug) } }
             }
             memoryCards(memory, onMemento, onWeek)
