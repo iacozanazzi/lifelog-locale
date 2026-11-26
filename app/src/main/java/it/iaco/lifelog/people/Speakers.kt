@@ -146,6 +146,28 @@ object Speakers {
     fun slug(name: String): String = java.text.Normalizer.normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "").replace(Regex("[^a-z0-9]+"), "-").trim('-')
 
+    /**
+     * Una riga sullo stato delle voci in un giorno, per l'intestazione del file per Claude e per Persone.
+     * Serve a capire perché le frasi restano "?": modello assente, pezzi troppo corti o punteggi nella fascia incerta.
+     */
+    fun diagnosis(ctx: Context, db: Db, day: String): String? {
+        if (!ready(ctx)) return if (sp(ctx).getBoolean("voices_off", false)) "spente da Iaco" else "modello non scaricato"
+        val rows = db.voiceRowsOfDay(day)
+        if (rows.isEmpty()) return null
+        val voices = voiceMap(db)
+        val named = rows.count { label(it.first, voices) != "?" }
+        val unconfirmed = rows.count { it.first != null && label(it.first, voices) == "?" }
+        val uncertain = rows.filter { it.first == null && it.second != null }.map { it.second!! }
+        val noPrint = rows.count { it.first == null && it.second == null }
+        val sb = StringBuilder("${rows.size} pezzi · $named con nome o Voce N · $unconfirmed voce nuova non ancora confermata · ${uncertain.size} incerti · $noPrint senza impronta (troppo corti o audio già cancellato)")
+        if (uncertain.isNotEmpty()) {
+            val lo = uncertain.count { it < 0.45f }
+            sb.append(" · incerti tra 0,35 e 0,45: $lo, tra 0,45 e 0,55: ${uncertain.size - lo}")
+        }
+        sb.append(" · voci in memoria: ${voices.size}")
+        return sb.toString()
+    }
+
     // ------------------------------------------------------------- aggancio alla trascrizione
 
     /**

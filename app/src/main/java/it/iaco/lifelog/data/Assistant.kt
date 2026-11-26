@@ -89,6 +89,7 @@ object Assistant {
         sb.append("parlato: $speechMin min · buchi: $buchi\n")
         val pending = segs.count { it.text == null }
         if (pending > 0) sb.append("ancora da trascrivere: $pending pezzi\n")
+        ctx?.let { c -> runCatching { Speakers.diagnosis(c, db, day) }.getOrNull() }?.let { sb.append("voci: ").append(it).append("\n") }
         val rough = runCatching { it.iaco.lifelog.Refine.pendingOfDay(ctx ?: return@runCatching 0, day) }.getOrDefault(0)
         if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
         sb.append("\n")
@@ -159,6 +160,7 @@ object Assistant {
             .put("abitudini", runCatching { Memory.marksJson(ctx) }.getOrDefault(JSONArray()))
             .also { Briefing.addState(ctx, it) }
             .also { o -> runCatching { People.stateFields(ctx, o) } }
+            .also { o -> runCatching { Miglioramenti.stateField(ctx, o) } }
     }
 
     // ------------------------------------------------------------- ricezione
@@ -177,6 +179,7 @@ object Assistant {
         runCatching { Briefing.fetch(ctx, gh) }
         runCatching { Memory.fetch(ctx, gh) } // indice e abitudini
         runCatching { People.fetch(ctx, gh) }
+        runCatching { gh.read("miglioramenti.json")?.let { Miglioramenti.save(ctx, it) } }
         val msg = if (an != null) "Analisi di ieri ricevuta alle ${clock()}" else "Controllato alle ${clock()}: l'analisi di stanotte non è ancora arrivata"
         ctx.fetchStatus = msg
         return msg
