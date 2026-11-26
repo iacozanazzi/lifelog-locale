@@ -75,6 +75,9 @@
             tools:node="merge" />
 
         <receiver
+            android:name=".data.NightAlarmReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".BootReceiver"
             android:exported="true">
             <intent-filter>
