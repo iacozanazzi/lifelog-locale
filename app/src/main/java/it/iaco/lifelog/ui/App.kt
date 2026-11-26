@@ -323,6 +323,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
         onPerson = onPerson,
         onTodos = onTodos,
         cards = { AreeTodayCard(tick, onArea) },
+        bottom = { MiglioramentiCard(tick) },
     )
 }
 

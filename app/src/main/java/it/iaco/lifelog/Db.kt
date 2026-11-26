@@ -153,6 +153,11 @@ class Db private constructor(context: Context) :
         bump()
     }
 
+    /** Per la diagnosi delle voci: (voce, punteggio) di ogni pezzo già trascritto del giorno. */
+    fun voiceRowsOfDay(day: String): List<Pair<String?, Float?>> = readableDatabase.rawQuery(
+        "SELECT voice, voice_score FROM segments WHERE day=? AND text IS NOT NULL", arrayOf(day)
+    ).use { c -> buildList { while (c.moveToNext()) add((if (c.isNull(0)) null else c.getString(0)) to (if (c.isNull(1)) null else c.getFloat(1))) } }
+
     /** Statistiche per voce: secondi parlati, giorni distinti, ultima volta. */
     fun voiceStats(): Map<String, Triple<Long, Int, Long>> = readableDatabase.rawQuery(
         """SELECT voice, COALESCE(SUM(end_ms-start_ms),0), COUNT(DISTINCT day), MAX(end_ms)

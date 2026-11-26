@@ -51,6 +51,17 @@ private fun minutesText(m: Long) = when {
 
 private fun daysText(n: Int) = if (n == 1) "1 giorno" else "$n giorni"
 
+/** "Ieri: 41 frasi su 300 con una voce riconosciuta." Solo se il modello c'è e ieri c'è stato parlato. */
+private fun voiceDiag(ctx: Context, db: Db): String? {
+    if (!Speakers.ready(ctx)) return null
+    val day = java.time.LocalDate.now(zone).minusDays(1).toString()
+    val rows = runCatching { db.voiceRowsOfDay(day) }.getOrDefault(emptyList())
+    if (rows.isEmpty()) return null
+    val voices = Speakers.voiceMap(db)
+    val ok = rows.count { Speakers.label(it.first, voices) != "?" }
+    return "Ieri: $ok frasi su ${rows.size} con una voce riconosciuta."
+}
+
 private fun modelState(ctx: Context) = when {
     Speakers.ready(ctx) -> VoiceModelState.READY
     Speakers.isDownloading(ctx) -> VoiceModelState.DOWNLOADING
@@ -89,6 +100,7 @@ fun PeopleRoute(tick: Int, onBack: () -> Unit, onPerson: (String) -> Unit, onVoi
             val db = Db.get(ctx)
             PeopleUi(
                 model = modelState(ctx),
+                diag = voiceDiag(ctx, db),
                 meKnown = runCatching { db.loadVoices().any { it.isMe } }.getOrDefault(false),
                 unknown = People.unknownVoices(ctx).map { u ->
                     UnknownVoiceRow(
