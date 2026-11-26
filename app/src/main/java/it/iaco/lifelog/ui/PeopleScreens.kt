@@ -44,6 +44,8 @@ data class UnknownVoiceRow(val id: String, val label: String, val meta: String, 
 
 data class PeopleUi(
     val model: VoiceModelState,
+    /** Una riga su come vanno le voci ieri, null se non c'è niente da dire. */
+    val diag: String? = null,
     /** Iaco ha già indicato quale voce è la sua. */
     val meKnown: Boolean,
     val unknown: List<UnknownVoiceRow>,
@@ -118,11 +120,16 @@ fun PeopleScreen(
             VoiceModelState.DOWNLOADING -> item {
                 Text("Scarico il riconoscimento delle voci…", style = Type.meta, color = c.accent, modifier = Modifier.padding(top = 14.dp))
             }
-            VoiceModelState.READY -> if (!s.meKnown && s.unknown.isNotEmpty()) item {
+            VoiceModelState.READY -> {
+                if (s.diag != null) item {
+                    Text(s.diag, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 14.dp))
+                }
+                if (!s.meKnown && s.unknown.isNotEmpty()) item {
                 Text(
                     "Prima di tutto dimmi qual è la tua voce: di solito è quella sentita di più.",
                     style = Type.meta, color = c.second, modifier = Modifier.padding(top = 14.dp)
                 )
+            }
             }
         }
 
