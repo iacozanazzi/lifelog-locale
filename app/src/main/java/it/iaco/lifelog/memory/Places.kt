@@ -128,6 +128,20 @@ object Places {
         return r[0]
     }
 
+    /**
+     * Dove eri in un certo istante della giornata: il nome del posto, "luogo senza nome" per una sosta
+     * non ancora nominata, null se eri in giro o i luoghi sono spenti. Serve a dividere le conversazioni.
+     * Margine di 10 minuti: la posizione si legge ogni 15, quindi l'arrivo vero è un po' prima della prima lettura.
+     */
+    fun locator(ctx: Context, day: String): (Long) -> String? {
+        val st = runCatching { stays(ctx, day) }.getOrDefault(emptyList())
+        if (st.isEmpty()) return { null }
+        val margin = 10 * 60_000L
+        return { ms -> st.firstOrNull { ms in (it.fromMs - margin)..(it.toMs + margin) }?.let { it.place?.nome ?: UNNAMED } }
+    }
+
+    const val UNNAMED = "luogo senza nome"
+
     /** Raggruppa le posizioni vicine e consecutive: una sosta è almeno 15 minuti nello stesso posto. */
     fun stays(ctx: Context, day: String): List<Stay> {
         val named = named(ctx)
