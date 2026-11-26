@@ -317,18 +317,8 @@ fun VoiceScreen(
 
 // =============================================================== Scheda in Oggi
 
-/** Promemoria sulle persone per la cima di Oggi: chi vedi, compleanni, chi non senti da tempo. */
+/** Promemoria sulle persone come righe di Oggi: chi vedi, compleanni, chi non senti da tempo. */
 @Composable
 fun PeopleTodayCard(rows: List<PeopleTodayRow>, onPerson: (String) -> Unit) {
-    if (rows.isEmpty()) return
-    val c = Life.c
-    Card {
-        Text("Persone", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text)
-        rows.forEachIndexed { i, r ->
-            Column(Modifier.padding(top = if (i == 0) 6.dp else 14.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onPerson(r.slug) }) {
-                Text(r.text, style = Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp), color = c.text)
-                r.detail.forEach { d -> Text(d, style = Type.text, color = c.text, modifier = Modifier.padding(top = 4.dp)) }
-            }
-        }
-    }
+    rows.forEachIndexed { i, r -> WatchRow("Persone", r.text, r.detail.firstOrNull().orEmpty()) { onPerson(r.slug) } }
 }
