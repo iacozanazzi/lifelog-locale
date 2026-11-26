@@ -47,6 +47,8 @@ class RecorderService : Service() {
         val prefs = Prefs(this)
         if (intent?.action == ACTION_STOP) {
             prefs.recordingWanted = false
+            // Una pausa in corso finisce qui: il buco lo salva holdPause() uscendo.
+            Pause.resume(this)
             Watchdog.cancel(this)
             stopRecording()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -136,9 +138,11 @@ class RecorderService : Service() {
     private fun supervise() {
         var failures = 0
         while (running) {
+            if (Pause.active(this)) { holdPause(); failures = 0; continue }
             val started = System.currentTimeMillis()
             val reason = try { loop() } catch (e: Exception) { Log.e(TAG, "errore di registrazione", e); e.message ?: "errore" }
             if (!running) break
+            if (Pause.active(this)) continue
             if (System.currentTimeMillis() - started > 60_000) failures = 0
             while (running && inCall()) SystemClock.sleep(2_000)
             if (!running) break
@@ -147,6 +151,36 @@ class RecorderService : Service() {
                 Notifications.alert(this, "Il microfono non riparte", "Tocca per riprendere la registrazione. ($reason)")
             }
             SystemClock.sleep(if (failures < 4) 3_000L else 30_000L)
+        }
+    }
+
+    /**
+     * Pausa privacy: il microfono è già stato rilasciato da [loop]. Il servizio resta in primo piano
+     * (così Android lascia riaccendere il microfono senza toccare il telefono), tiene vivo il segnale
+     * di vita per il watchdog e alla fine salva il buco "pausa privacy".
+     */
+    private fun holdPause() {
+        val prefs = Prefs(this)
+        val nm = getSystemService(NotificationManager::class.java)
+        val start = Pause.since(this).takeIf { it > 0 } ?: System.currentTimeMillis()
+        Live.level.value = 0f
+        Live.speaking.value = false
+        var shownUntil = 0L
+        while (running && Pause.active(this)) {
+            val until = Pause.until(this)
+            if (until != shownUntil) {
+                shownUntil = until
+                runCatching { nm.notify(Notifications.ID_RECORDING, Notifications.paused(this, until)) }
+            }
+            prefs.lastHeartbeat = System.currentTimeMillis()
+            SystemClock.sleep(1_000)
+        }
+        val end = System.currentTimeMillis()
+        if (end - start > 20_000) Db.get(this).insertGap(start, end, "pausa privacy")
+        Pause.clear(this)
+        prefs.lastHeartbeat = end
+        if (running) runCatching {
+            nm.notify(Notifications.ID_RECORDING, Notifications.recording(this, "Ripreso alle ${Notifications.hhmm(end)}"))
         }
     }
 
@@ -204,7 +238,7 @@ class RecorderService : Service() {
         rec.startRecording()
         var lastGoodRead = System.currentTimeMillis()
         try {
-            while (running) {
+            while (running && !Pause.active(this)) {
                 val n = rec.read(shorts, 0, window)
                 if (n <= 0) {
                     // Microfono tolto (chiamata, altra app): dopo 5 s lo ricreo da capo.

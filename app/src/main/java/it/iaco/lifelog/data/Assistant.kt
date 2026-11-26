@@ -97,9 +97,15 @@ object Assistant {
         // Luoghi (se attivi): una riga quando cambia il posto, solo il nome, mai le coordinate.
         val placeOf: (Long) -> String? = ctx?.let { c -> runCatching { it.iaco.lifelog.memory.Places.locator(c, day) }.getOrNull() } ?: { _ -> null }
         var lastPlace: String? = null
+        // Momenti segnati da Iaco: una riga "★" all'ora giusta, in mezzo al parlato.
+        val marks = ArrayDeque(db.marksOfDay(day))
+        fun markLine(ms: Long) {
+            sb.append(Instant.ofEpochMilli(ms).atZone(zone).format(hms)).append(" ★ Iaco ha segnato questo momento\n")
+        }
         for (s in segs) {
             val t = s.text?.trim().orEmpty()
             if (t.isEmpty()) continue
+            while (marks.isNotEmpty() && marks.first().ms < s.startMs) markLine(marks.removeFirst().ms)
             val place = placeOf(s.startMs)
             if (place != lastPlace) {
                 sb.append("\n— luogo: ").append(place ?: "in giro").append(" —\n")
@@ -108,6 +114,7 @@ object Assistant {
             val who = Speakers.label(s.voice, voices)
             sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ").append(who).append(": ").append(t.replace("\n", " ")).append("\n")
         }
+        while (marks.isNotEmpty()) markLine(marks.removeFirst().ms)
         return sb.toString()
     }
 
@@ -174,6 +181,12 @@ object Assistant {
         val day = yesterday()
         val an = gh.read("analisi/$day.json")
         if (an != null) File(dir(ctx), "analisi-$day.json").writeText(an)
+        // Anche i 6 giorni prima: Claude li rianalizza quando arrivano trascrizioni in ritardo,
+        // e servono per i titoli delle conversazioni nella pagina di ogni giorno.
+        for (back in 2L..7L) runCatching {
+            val d = LocalDate.now(zone).minusDays(back).toString()
+            gh.read("analisi/$d.json")?.let { File(dir(ctx), "analisi-$d.json").writeText(it) }
+        }
         gh.read("impegni.json")?.let { File(dir(ctx), "impegni.json").writeText(it) }
         runCatching { Aree.fetch(ctx, gh) } // Seral e università
         runCatching { Briefing.fetch(ctx, gh) }
@@ -185,11 +198,14 @@ object Assistant {
         return msg
     }
 
-    data class Item(val ora: String, val testo: String, val tipo: String)
+    data class Item(val ora: String, val testo: String, val tipo: String, val segnato: Boolean = false)
+    /** Una conversazione del giorno, col titolo dato da Claude (orari HH:MM). */
+    data class Conversation(val da: String, val a: String, val titolo: String)
     data class Section(val area: String, val titolo: String, val voci: List<Item>)
     data class Analysis(
         val data: String, val generato: String, val parlatoMin: Int, val vuoto: Boolean,
         val giornata: String, val sezioni: List<Section>, val domani: List<String>, val daVerificare: List<Item>,
+        val conversazioni: List<Conversation> = emptyList(),
     )
     data class Commitment(
         val id: String, val testo: String, val chi: String, val persona: String, val area: String,
@@ -204,8 +220,9 @@ object Assistant {
 
     fun parseAnalysis(j: JSONObject): Analysis {
         fun items(a: JSONArray?) = (0 until (a?.length() ?: 0)).map { i ->
-            val o = a!!.getJSONObject(i); Item(o.optString("ora"), o.optString("testo"), o.optString("tipo"))
+            val o = a!!.getJSONObject(i); Item(o.optString("ora"), o.optString("testo"), o.optString("tipo"), o.optBoolean("segnato"))
         }
+        val conv = j.optJSONArray("conversazioni")
         val sez = j.optJSONArray("sezioni")
         return Analysis(
             data = j.optString("data"), generato = j.optString("generato"),
@@ -217,6 +234,12 @@ object Assistant {
             },
             domani = j.optJSONArray("domani").let { a -> (0 until (a?.length() ?: 0)).map { a!!.optString(it) } },
             daVerificare = items(j.optJSONArray("da_verificare")),
+            conversazioni = (0 until (conv?.length() ?: 0)).mapNotNull { i ->
+                val o = conv!!.optJSONObject(i) ?: return@mapNotNull null
+                val t = o.optString("titolo").trim()
+                if (t.isEmpty() || o.optString("da").length < 4) null
+                else Conversation(o.optString("da").take(5), o.optString("a").take(5), t)
+            },
         )
     }
 

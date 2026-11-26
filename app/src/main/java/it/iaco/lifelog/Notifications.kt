@@ -48,13 +48,37 @@ object Notifications {
         )
     }
 
+    private fun moment(ctx: Context, code: Int, action: String, minutes: Int = 0): PendingIntent =
+        PendingIntent.getBroadcast(
+            ctx, code,
+            Intent(ctx, MomentReceiver::class.java).setAction(action).putExtra(MomentReceiver.EXTRA_MINUTES, minutes),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
     fun recording(ctx: Context, text: String) =
         NotificationCompat.Builder(ctx, CH_RECORDING)
             .setSmallIcon(R.drawable.ic_notif)
             .setContentTitle("Lifelog sta ascoltando")
             .setContentText(text)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(openApp(ctx, false))
+            .addAction(0, "★ Segna momento", moment(ctx, 20, MomentReceiver.ACTION_MARK))
+            .addAction(0, "Pausa 15 min", moment(ctx, 21, MomentReceiver.ACTION_PAUSE, 15))
+            .addAction(0, "Pausa 1 ora", moment(ctx, 22, MomentReceiver.ACTION_PAUSE, 60))
+            .build()
+
+    /** Pausa privacy: il microfono è spento e riparte da solo all'ora indicata. */
+    fun paused(ctx: Context, untilMs: Long) =
+        NotificationCompat.Builder(ctx, CH_RECORDING)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle("Lifelog in pausa")
+            .setContentText("Microfono spento fino alle ${hhmm(untilMs)}, poi riprende da solo.")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openApp(ctx, false))
+            .addAction(0, "Riprendi ora", moment(ctx, 23, MomentReceiver.ACTION_RESUME))
+            .addAction(0, "+1 ora", moment(ctx, 24, MomentReceiver.ACTION_PAUSE, ((untilMs - System.currentTimeMillis()) / 60_000 + 60).toInt().coerceAtLeast(60)))
             .build()
 
     fun work(ctx: Context, title: String, text: String, progress: Int = -1) =

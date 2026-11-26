@@ -22,6 +22,9 @@ data class Segment(
 
 data class Gap(val startMs: Long, val endMs: Long, val reason: String)
 
+/** Un momento che Iaco ha segnato a mano (tendina, notifica o app). */
+data class Mark(val id: Long, val ms: Long)
+
 data class DaySummary(val day: String, val segments: Int, val pending: Int, val chars: Int, val speechMs: Long = 0)
 
 /**
@@ -29,7 +32,7 @@ data class DaySummary(val day: String, val segments: Int, val pending: Int, val 
  * L'audio viene cancellato appena trascritto: si tiene solo il testo.
  */
 class Db private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 3) {
+    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 4) {
 
     /** Cresce a ogni scrittura: l'interfaccia ricalcola solo quando cambia qualcosa. */
     @Volatile var version = 0L
@@ -59,6 +62,7 @@ class Db private constructor(context: Context) :
             )"""
         )
         addVoices(db)
+        addMarks(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -67,7 +71,31 @@ class Db private constructor(context: Context) :
             db.execSQL("UPDATE segments SET end_ms = start_ms WHERE text = ''")
         }
         if (oldVersion < 3) addVoices(db)
+        if (oldVersion < 4) addMarks(db)
     }
+
+    /** Versione 4: momenti segnati da Iaco. Solo una tabella nuova, il resto non si tocca. */
+    private fun addMarks(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS marks (id INTEGER PRIMARY KEY AUTOINCREMENT, ms INTEGER NOT NULL, day TEXT NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_marks_day ON marks(day, ms)")
+    }
+
+    // ------------------------------------------------------------- momenti segnati
+
+    fun insertMark(ms: Long): Long =
+        writableDatabase.insert("marks", null, ContentValues().apply {
+            put("ms", ms)
+            put("day", dayOf(ms))
+        }).also { bump() }
+
+    fun deleteMark(id: Long) {
+        writableDatabase.delete("marks", "id=?", arrayOf(id.toString()))
+        bump()
+    }
+
+    fun marksOfDay(day: String): List<Mark> = readableDatabase.rawQuery(
+        "SELECT id, ms FROM marks WHERE day=? ORDER BY ms", arrayOf(day)
+    ).use { c -> buildList { while (c.moveToNext()) add(Mark(c.getLong(0), c.getLong(1))) } }
 
     /**
      * Versione 3 (Persone): chi parla in ogni segmento e le voci conosciute.
