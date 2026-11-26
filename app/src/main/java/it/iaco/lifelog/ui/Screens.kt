@@ -146,47 +146,61 @@ fun TodayScreen(
     onMemento: (String) -> Unit = {},
     onWeek: () -> Unit = {},
     onPerson: (String) -> Unit = {},
-    /** Apre la scheda Impegni. */
-    onTodos: () -> Unit = {},
-    /** Righe in più dentro "Da tenere d'occhio" (Seral e università, ecc.). */
+    /** Schede delle funzioni (Seral e università, ecc.), sotto "Da ieri". */
     cards: @Composable () -> Unit = {},
-    /** Spazio in fondo, sopra "Adesso" (proposte di miglioramento dell'app). */
-    bottom: @Composable () -> Unit = {},
 ) {
     val c = Life.c
-    val b = s.briefing
-    // Prossimo: il primo evento di oggi non ancora passato; se non c'è, la preparazione per domani.
-    val nextEvent = b?.agenda?.firstOrNull { !it.past }
-    val nextPrep = if (nextEvent == null) b?.tomorrow?.firstOrNull() else null
-    // Da fare: scadenze, poi impegni da ieri non già in scadenza. Un'unica lista.
-    val dueIds = b?.due.orEmpty().map { it.id }.toSet()
-    val fromYesterday = s.brief?.todos.orEmpty().filter { it.id !in dueIds }
-    val hasTodo = b?.due.orEmpty().isNotEmpty() || fromYesterday.isNotEmpty() || b?.drafts.orEmpty().isNotEmpty() || b?.proposals.orEmpty().isNotEmpty()
-    val restAgenda = b?.agenda.orEmpty().filter { it !== nextEvent }
-    val restTomorrow = b?.tomorrow.orEmpty().filter { it !== nextPrep }
-    val hasAbove = nextEvent != null || nextPrep != null || hasTodo || s.brief != null || restAgenda.isNotEmpty()
-
     Column(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(start = side, end = side, top = 16.dp, bottom = 24.dp),
         ) {
-            item("testa") {
+            item {
                 Row(verticalAlignment = Alignment.Bottom) {
                     ScreenHeader(s.dateLabel, "Oggi", Modifier.weight(1f))
                     RoundIcon(onSettings, Modifier.padding(bottom = 8.dp))
                 }
             }
 
-            // Problemi prima di tutto: senza registrazione il resto non serve.
-            if (s.state == RecState.STALLED) item("fermo") {
-                Column(Modifier.padding(top = 18.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill).clickable(onClick = onToggle).padding(18.dp)) {
-                    Text("La registrazione si è fermata alle ${s.stalledSince}.", style = Type.rowTitle, color = c.text)
-                    Text("Android l'ha chiusa. Tocca qui per riprendere.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp))
+            val top = s.briefing?.takeIf { it.hasTop }
+            if (s.brief != null || top != null) {
+                item {
+                    Column(
+                        Modifier.padding(top = 18.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill)
+                            .then(if (top == null) Modifier.clickable(onClick = onOpenYesterday) else Modifier).padding(18.dp)
+                    ) {
+                        top?.let { BriefingTop(it, briefingActions, hasYesterday = s.brief != null) }
+                        val b = s.brief ?: return@Column
+                        Text("Da ieri", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text)
+                        Text(b.text, style = Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp), color = c.text, modifier = Modifier.padding(top = 6.dp))
+                        b.todos.forEach { t ->
+                            Row(
+                                Modifier.padding(top = 12.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onToggleTodo(t.id, !t.done) },
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Check(t.done, onCard = true)
+                                Text(
+                                    t.text, style = Type.text.copy(textDecoration = if (t.done) androidx.compose.ui.text.style.TextDecoration.LineThrough else null),
+                                    color = if (t.done) c.faint else c.text, modifier = Modifier.padding(start = 12.dp, top = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            if (b.more > 0) "Leggi la giornata e altri ${b.more} impegni" else "Leggi la giornata",
+                            style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent,
+                            modifier = Modifier.padding(top = 14.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpenYesterday)
+                        )
+                    }
                 }
             }
+            briefingCards(s.briefing, briefingActions)
+
+            memoryCards(memory, onMemento, onWeek)
+            if (s.people.isNotEmpty()) item { PeopleTodayCard(s.people, onPerson) }
+            item { cards() }
+
             s.crash?.let {
-                item("errore") {
+                item {
                     Column(Modifier.padding(top = 18.dp)) {
                         Text("L'app si è chiusa per un errore. Mandamelo per sistemarlo.", style = Type.text, color = c.text)
                         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -197,107 +211,22 @@ fun TodayScreen(
                 }
             }
 
-            if (nextEvent != null) item("prossimo") {
-                NextUp("Prossimo · ${nextEvent.time}", nextEvent.title, nextEvent.place, nextEvent.people, emptyList(), onPerson)
-            } else if (nextPrep != null) item("prossimo") {
-                NextUp(nextPrep.whenLabel, nextPrep.title, "", nextPrep.people, nextPrep.points, onPerson)
-            }
-
-            if (hasTodo) {
-                item("da-fare") {
-                    val more = s.brief?.more ?: 0
-                    TodaySection("Da fare", if (more > 0) "Altri $more ›" else "Tutti ›", onTodos)
-                }
-                var first = true
-                b?.due.orEmpty().forEach { t ->
-                    val f = first; first = false
-                    item("due-${t.id}") { TodayCheckRow(t.text, t.meta, t.done, f) { briefingActions.onToggleDue(t.id, !t.done) } }
-                }
-                fromYesterday.forEach { t ->
-                    val f = first; first = false
-                    item("ieri-${t.id}") {
-                        TodayCheckRow(t.text, if (t.person.isNotBlank()) "Da ieri · ${t.person}" else "Da ieri", t.done, f) { onToggleTodo(t.id, !t.done) }
-                    }
-                }
-                b?.drafts.orEmpty().forEach { d ->
-                    val f = first; first = false
-                    item("bozza-${d.id}") {
-                        TodayActionRow(
-                            "Messaggio pronto: ${d.to.replaceFirstChar { it.lowercase() }}", d.source, d.text, f,
-                            listOf(
-                                Triple("Invia…", { briefingActions.onSendDraft(d.id) }, true),
-                                Triple("Copia", { briefingActions.onCopyDraft(d.id) }, true),
-                                Triple("Fatto", { briefingActions.onDraftDone(d.id) }, false),
-                            ),
-                        )
-                    }
-                }
-                b?.proposals.orEmpty().forEach { p ->
-                    val f = first; first = false
-                    item("prop-${p.id}") {
-                        TodayActionRow(
-                            "In calendario: ${p.title}", p.whenLabel, p.source, f,
-                            listOf(
-                                Triple("Aggiungi", { briefingActions.onAddEvent(p.id) }, true),
-                                Triple("Non serve", { briefingActions.onSkipEvent(p.id) }, false),
-                            ),
-                        )
-                    }
+            if (s.state == RecState.STALLED) item {
+                Column(Modifier.padding(top = 22.dp)) {
+                    Text("La registrazione si è fermata alle ${s.stalledSince}.", style = Type.rowTitle, color = c.text)
+                    Text("Android l'ha chiusa. Riprendi con il pulsante qui sotto.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp))
                 }
             }
 
-            if (restAgenda.isNotEmpty()) {
-                item("agenda") { TodaySection("Agenda") }
-                restAgenda.forEachIndexed { i, e ->
-                    item("ag-$i") { TodayAgendaRow(e.time, e.title, e.place, e.past, i == 0) }
-                }
+            item {
+                Text(
+                    if (s.speechMinutes > 0) "Adesso, ${durationText(s.speechMinutes)} di voce" else "Adesso",
+                    style = Type.meta, color = c.second, modifier = Modifier.padding(top = 26.dp, bottom = 10.dp)
+                )
             }
 
-            if (restTomorrow.isNotEmpty()) {
-                item("domani") { TodaySection("Domani") }
-                restTomorrow.forEachIndexed { i, p ->
-                    item("dom-$i") {
-                        WatchRow(p.whenLabel, p.title, p.points.firstOrNull().orEmpty(), first = i == 0) { p.people.firstOrNull()?.let { onPerson(it.name) } }
-                    }
-                }
-            }
-
-            s.brief?.let { br ->
-                item("ieri") {
-                    TodaySection("Ieri", "Leggi ›", onOpenYesterday)
-                    Text(
-                        br.text, style = Type.body, color = c.text,
-                        modifier = Modifier.padding(top = 4.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenYesterday)
-                    )
-                }
-            }
-
-            // Da tenere d'occhio: una riga per area, ognuna apre la sua schermata.
-            if (memory != null || s.people.isNotEmpty() || b?.calendarMissing == true) {
-                item("occhio") { TodaySection("Da tenere d'occhio") }
-            }
-            item("aree") { cards() }
-            s.people.forEachIndexed { i, r ->
-                item("p-${r.slug}") { WatchRow("Persone", r.text, r.detail.firstOrNull().orEmpty()) { onPerson(r.slug) } }
-            }
-            memoryCards(memory, onMemento, onWeek)
-            if (b?.calendarMissing == true) item("cal") {
-                WatchRow("Calendario", "Mostra qui gli eventi di oggi e chi vedrai", "Lo legge solo sul telefono", onClick = briefingActions.onGrantCalendar)
-            }
-
-            item("in-fondo") { bottom() }
-
-            // Adesso: le ultime frasi, come il testo di una canzone. In cima solo se non c'è altro.
-            item("adesso") {
-                val sub = listOfNotNull(
-                    s.speechMinutes.takeIf { it > 0 }?.let { "${durationText(it)} di voce" },
-                    s.lastTime?.let { "ultima frase alle $it" },
-                ).joinToString(" · ")
-                TodaySection("Adesso", if (s.lines.isNotEmpty()) "Tutta la giornata ›" else null, onOpenToday, top = if (hasAbove) 34 else 22)
-                if (sub.isNotBlank()) Text(sub, style = Type.meta, color = c.second, modifier = Modifier.padding(bottom = 10.dp))
-            }
             if (s.lines.isEmpty()) {
-                item("adesso-vuoto") {
+                item {
                     Text(
                         when {
                             !s.ready -> "Completa la configurazione e Lifelog comincerà ad ascoltare."
@@ -305,24 +234,31 @@ fun TodayScreen(
                             s.state == RecState.LISTENING -> "Quello che dici oggi comparirà qui."
                             else -> "Premi play e Lifelog ascolta la tua giornata."
                         },
-                        style = Type.lyric, color = c.faint, modifier = Modifier.padding(top = 4.dp)
+                        style = Type.lyric, color = c.faint
                     )
                     if (s.ready && s.state == RecState.OFF) SolidButton("Inizia ad ascoltare", onToggle, modifier = Modifier.padding(top = 22.dp))
                     if (!s.ready) SolidButton("Completa la configurazione", onSetup, modifier = Modifier.padding(top = 22.dp))
                 }
             } else {
-                val shown = s.lines.takeLast(if (hasAbove) 2 else 5)
-                val n = shown.size
-                val style = if (hasAbove) Type.lyric.copy(fontSize = 24.sp, lineHeight = 29.sp) else Type.lyric
+                val n = s.lines.size
                 items(n) { i ->
                     val age = n - 1 - i // 0 = più recente
                     val color = when (age) {
                         0 -> c.text
-                        1 -> c.text.copy(alpha = 0.55f)
+                        1 -> c.text.copy(alpha = 0.72f)
                         2 -> c.second
                         else -> c.faint
                     }
-                    Text(shown[i], style = style, color = color, modifier = Modifier.padding(bottom = 12.dp).clickable(onClick = onOpenToday))
+                    Text(
+                        s.lines[i], style = Type.lyric, color = color,
+                        modifier = Modifier.padding(bottom = 14.dp).clickable(onClick = onOpenToday)
+                    )
+                }
+                item {
+                    Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        s.lastTime?.let { Text("Ultima frase alle $it", style = Type.meta, color = c.second, modifier = Modifier.weight(1f)) }
+                        TextAction("Tutta la giornata", onOpenToday)
+                    }
                 }
             }
         }
@@ -355,7 +291,7 @@ fun TodayScreen(
                 )
                 val sub = when {
                     !s.ready -> "Mancano pochi passi"
-                    s.pending > 0 -> "${s.pendingMinutes.coerceAtLeast(1)} min da trascrivere"
+                    s.pending > 0 -> "${s.pendingMinutes.coerceAtLeast(1)} min da trascrivere. " + s.transcribeStatus.removePrefix("In attesa: ")
                     else -> "Tutto trascritto"
                 }
                 Text(sub, style = Type.meta, color = c.second, maxLines = 1, overflow = TextOverflow.Ellipsis)
