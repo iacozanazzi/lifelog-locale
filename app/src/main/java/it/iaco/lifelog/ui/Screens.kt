@@ -45,7 +45,7 @@ import androidx.compose.ui.semantics.semantics
 
 // =============================================================== Stati (dati puri)
 
-enum class RecState { OFF, LISTENING, STALLED }
+enum class RecState { OFF, LISTENING, PAUSED, STALLED }
 
 data class TodayUi(
     val dateLabel: String,
@@ -73,11 +73,23 @@ data class TodayUi(
     val briefing: BriefingUi? = null,
     /** Promemoria sulle persone (thread Persone): chi vedi oggi, compleanni, chi non senti da tempo. */
     val people: List<PeopleTodayRow> = emptyList(),
+    /** Pausa privacy: ora (HH:mm) in cui riprende da sola. */
+    val pausedUntil: String? = null,
+    /** Momenti segnati oggi. */
+    val marksToday: Int = 0,
 )
 
 data class Brief(val text: String, val todos: List<TodoItem>, val more: Int = 0)
 
-data class Moment(val time: String, val text: String, val gap: Boolean = false)
+data class Moment(
+    val time: String, val text: String, val gap: Boolean = false,
+    val startMs: Long = 0, val endMs: Long = 0, val place: String? = null,
+    /** Momento segnato da Iaco (id nel database), mostrato con la stella. */
+    val markId: Long? = null,
+)
+
+/** Una conversazione nella pagina Giorno: titolo di Claude (o l'orario se non c'è ancora) e i suoi paragrafi. */
+data class DayGroup(val title: String, val note: String, val moments: List<Moment>)
 
 data class DayRow(val day: String, val title: String, val meta: String, val spans: List<Span>, val summary: String = "", val badge: String = "")
 
@@ -85,7 +97,7 @@ data class DayUi(
     val title: String,
     val subtitle: String,
     val spans: List<Span>,
-    val sections: List<Pair<String, List<Moment>>>,
+    val sections: List<DayGroup>,
     val pending: Int,
     /** Racconto di Claude per questo giorno, se c'è. */
     val story: YesterdayUi? = null,
@@ -157,9 +169,16 @@ fun TodayScreen(
     cards: @Composable () -> Unit = {},
     /** Spazio in fondo, sopra "Adesso" (proposte di miglioramento dell'app). */
     bottom: @Composable () -> Unit = {},
+    /** Segna questo momento. */
+    onMark: () -> Unit = {},
+    /** Pausa privacy per N minuti; 0 = ferma finché Iaco non riprende. */
+    onPause: (Int) -> Unit = {},
+    /** Fine anticipata della pausa privacy. */
+    onResume: () -> Unit = {},
 ) {
     val c = Life.c
     val b = s.briefing
+    var choosingPause by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     // Prossimo: il primo evento di oggi non ancora passato; se non c'è, la preparazione per domani.
     val nextEvent = b?.agenda?.firstOrNull { !it.past }
     val nextPrep = if (nextEvent == null) b?.tomorrow?.firstOrNull() else null
@@ -300,6 +319,7 @@ fun TodayScreen(
                 val sub = listOfNotNull(
                     s.speechMinutes.takeIf { it > 0 }?.let { "${durationText(it)} di voce" },
                     s.lastTime?.let { "ultima frase alle $it" },
+                    s.marksToday.takeIf { it > 0 }?.let { if (it == 1) "★ 1 momento segnato" else "★ $it momenti segnati" },
                 ).joinToString(" · ")
                 TodaySection("Adesso", if (s.lines.isNotEmpty()) "Tutta la giornata ›" else null, onOpenToday, top = if (hasAbove) 34 else 22)
                 if (sub.isNotBlank()) Text(sub, style = Type.meta, color = c.second, modifier = Modifier.padding(bottom = 10.dp))
@@ -335,6 +355,23 @@ fun TodayScreen(
             }
         }
 
+        // Scelta della pausa: appare sopra la barra quando si tocca il tasto pausa.
+        if (choosingPause && s.state == RecState.LISTENING) {
+            Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 8.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.fill).padding(16.dp)) {
+                Text("Smetto di ascoltare per…", style = Type.rowTitle, color = c.text)
+                Text("Il microfono si spegne davvero e riparte da solo.", style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("15 min") { choosingPause = false; onPause(15) }
+                    Chip("1 ora") { choosingPause = false; onPause(60) }
+                    Chip("3 ore") { choosingPause = false; onPause(180) }
+                }
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    TextAction("Ferma finché non riprendo", { choosingPause = false; onPause(0) }, color = c.second)
+                    TextAction("Annulla", { choosingPause = false })
+                }
+            }
+        }
+
         // Barra di controllo, come il mini player di un'app musicale.
         Row(
             Modifier
@@ -357,12 +394,14 @@ fun TodayScreen(
                         !s.ready -> "Configurazione da completare"
                         s.state == RecState.STALLED -> "Fermo dalle ${s.stalledSince}"
                         s.state == RecState.LISTENING -> if (s.speaking) "Qualcuno parla" else "In ascolto"
-                        else -> "In pausa"
+                        s.state == RecState.PAUSED -> "In pausa fino alle ${s.pausedUntil}"
+                        else -> "Non sto ascoltando"
                     },
                     style = Type.rowTitle, color = if (s.state == RecState.STALLED) c.accent else c.text, maxLines = 1
                 )
                 val sub = when {
                     !s.ready -> "Mancano pochi passi"
+                    s.state == RecState.PAUSED && !s.forcing -> "Microfono spento, poi riprende da solo"
                     s.forcing -> s.transcribeStatus.ifBlank { "Trascrivo…" }
                     s.pending > 0 -> "${s.pendingMinutes.coerceAtLeast(1)} min da trascrivere"
                     s.refinePending > 0 -> "Whisper deve rifinire ${s.refinePending} blocchi"
@@ -374,9 +413,20 @@ fun TodayScreen(
                     s.ready && s.canTranscribeNow -> TextAction("Trascrivi adesso", onTranscribeNow)
                 }
             }
+            if (s.ready && s.state == RecState.LISTENING) {
+                Spacer(Modifier.width(10.dp))
+                MarkButton(onMark)
+            }
             if (s.ready) {
-                Spacer(Modifier.width(12.dp))
-                PlayPause(listening = s.state == RecState.LISTENING, onClick = onToggle)
+                Spacer(Modifier.width(10.dp))
+                PlayPause(
+                    listening = s.state == RecState.LISTENING,
+                    onClick = when (s.state) {
+                        RecState.LISTENING -> ({ choosingPause = !choosingPause })
+                        RecState.PAUSED -> onResume
+                        else -> onToggle
+                    },
+                )
             }
         }
     }
@@ -434,6 +484,22 @@ private fun LevelBars(level: Float, speaking: Boolean) {
         listOf(h1, h2.coerceAtMost(1f), h3).forEach { h ->
             Box(Modifier.width(4.dp).height(22.dp * h).clip(RoundedCornerShape(2.dp)).background(c.accent))
         }
+    }
+}
+
+/** Stella tonda accanto al tasto pausa: segna questo momento. */
+@Composable
+private fun MarkButton(onClick: () -> Unit) {
+    val c = Life.c
+    Box(
+        Modifier.size(42.dp).clip(CircleShape).background(c.bg).clickable(onClick = onClick)
+            .semantics { contentDescription = "Segna questo momento" },
+        contentAlignment = Alignment.Center
+    ) {
+        androidx.compose.foundation.Image(
+            androidx.compose.ui.res.painterResource(it.iaco.lifelog.R.drawable.ic_mark), null,
+            Modifier.size(20.dp), colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(c.accent)
+        )
     }
 }
 
@@ -718,6 +784,8 @@ fun DayScreen(
     onNamePlace: (StayRow) -> Unit = {},
     /** Apre la schermata di un'area ("seral", "uni") dal titolo della sua sezione. */
     onArea: (String) -> Unit = {},
+    /** Toglie un momento segnato per sbaglio. */
+    onRemoveMark: (Long) -> Unit = {},
 ) {
     val c = Life.c
     var story by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(startOnStory && s.story != null) }
@@ -790,15 +858,23 @@ fun DayScreen(
             if (s.sections.isEmpty()) item {
                 Text("Niente di trascritto per questo giorno.", style = Type.body, color = c.second, modifier = Modifier.padding(top = 28.dp))
             }
-            s.sections.forEachIndexed { idx, (name, moments) ->
+            s.sections.forEachIndexed { idx, g ->
                 item {
-                    Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(name, style = Type.section, color = c.text, modifier = Modifier.weight(1f))
-                        if (idx == 0) TextAction("Condividi", onShare)
+                    if (idx == 0) Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.End) {
+                        TextAction("Condividi", onShare)
+                    }
+                    Column(Modifier.fillMaxWidth().padding(top = if (idx == 0) 8.dp else 30.dp, bottom = 4.dp)) {
+                        Text(g.title, style = Type.section, color = c.text)
+                        if (g.note.isNotBlank()) Text(g.note, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
-                items(moments) { m ->
-                    if (m.gap) {
+                items(g.moments) { m ->
+                    if (m.markId != null) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("★ Hai segnato questo momento alle ${m.time}", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.weight(1f))
+                            TextAction("Togli", { onRemoveMark(m.markId) }, color = c.second)
+                        }
+                    } else if (m.gap) {
                         Column(Modifier.padding(vertical = 10.dp)) {
                             Hairline()
                             Text("${m.time} ${m.text}", style = Type.meta, color = c.second, modifier = Modifier.padding(vertical = 10.dp))

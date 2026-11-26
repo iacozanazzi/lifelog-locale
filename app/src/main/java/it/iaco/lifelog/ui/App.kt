@@ -47,6 +47,8 @@ import it.iaco.lifelog.Engine
 import it.iaco.lifelog.Pcm
 import it.iaco.lifelog.Recent
 import it.iaco.lifelog.Db
+import it.iaco.lifelog.Marks
+import it.iaco.lifelog.Pause
 import it.iaco.lifelog.DriveSync
 import it.iaco.lifelog.Exporter
 import it.iaco.lifelog.Gap
@@ -202,6 +204,7 @@ private fun daySubtitle(day: String): String =
 
 private fun momentsOf(
     segs: List<Segment>, gaps: List<Gap>, voices: Map<String, Voice> = emptyMap(), placeOf: (Long) -> String? = { null },
+    marks: List<it.iaco.lifelog.Mark> = emptyList(),
 ): List<Pair<Long, Moment>> {
     var lastPlace: String? = null
     return Exporter.paragraphs(segs, byVoice = voices.isNotEmpty(), placeOf = placeOf).map { p ->
@@ -209,13 +212,58 @@ private fun momentsOf(
         // Il luogo si scrive quando cambia, non a ogni paragrafo.
         val where = p.place?.takeIf { it != lastPlace }?.let { " · $it" }.orEmpty()
         lastPlace = p.place
-        p.startMs to Moment("${Notifications.hhmm(p.startMs)}–${Notifications.hhmm(p.endMs)}$who$where", p.text)
+        p.startMs to Moment("${Notifications.hhmm(p.startMs)}–${Notifications.hhmm(p.endMs)}$who$where", p.text, startMs = p.startMs, endMs = p.endMs, place = p.place)
     } + gaps.map {
         it.startMs to Moment(
             "${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}",
             "non registrato (${(it.endMs - it.startMs) / 60_000} min): ${gapReason(it.reason)}.",
-            gap = true
+            gap = true, startMs = it.startMs, endMs = it.endMs,
         )
+    } + marks.map { it.ms to Moment(Notifications.hhmm(it.ms), "", startMs = it.ms, endMs = it.ms, markId = it.id) }
+}
+
+/**
+ * Divide la giornata in conversazioni. Se Claude ha già analizzato il giorno, usa i suoi confini
+ * e i suoi titoli; il resto (per esempio oggi) si divide da solo: una conversazione nuova dopo
+ * 10 minuti di silenzio, a un cambio di luogo o dopo un buco di registrazione.
+ */
+private fun groupsOf(day: String, all: List<Pair<Long, Moment>>, convs: List<Assistant.Conversation>): List<DayGroup> {
+    val date = runCatching { LocalDate.parse(day) }.getOrNull()
+    fun ms(hm: String): Long? = runCatching {
+        date!!.atTime(java.time.LocalTime.parse(hm)).atZone(zone).toInstant().toEpochMilli()
+    }.getOrNull()
+    // Confini di Claude, con 2 minuti di tolleranza per gli arrotondamenti all'ora.
+    val ranges = convs.mapNotNull { cv ->
+        val a = ms(cv.da) ?: return@mapNotNull null
+        val b = ms(cv.a.ifBlank { cv.da })?.let { if (it < a) a else it } ?: a
+        Triple(a - 120_000, b + 179_999, cv.titolo)
+    }
+    class G(val conv: Int, var end: Long, val place: String?, var closed: Boolean = false) { val moments = mutableListOf<Moment>() }
+    val out = mutableListOf<G>()
+    for ((t, m) in all) {
+        val conv = if (m.gap) -1 else ranges.indexOfFirst { t in it.first..it.second }
+        val cur = out.lastOrNull()
+        val joins = cur != null && !cur.closed && when {
+            m.gap || m.markId != null -> true // un buco o una stella restano dove sono
+            conv >= 0 -> cur.conv == conv
+            else -> cur.conv < 0 && t - cur.end < 10 * 60_000 && (m.place == null || cur.place == null || m.place == cur.place)
+        }
+        val g = if (joins) cur!! else G(conv, m.endMs, m.place).also { out += it }
+        g.moments += m
+        if (!m.gap && m.markId == null) g.end = maxOf(g.end, m.endMs)
+        if (m.gap) g.closed = true
+    }
+    return out.map { g ->
+        val real = g.moments.filter { !it.gap && it.markId == null }
+        val from = (real.firstOrNull() ?: g.moments.first()).startMs
+        val to = real.maxOfOrNull { it.endMs } ?: g.moments.maxOf { it.endMs }
+        val span = if (to - from >= 60_000) "${Notifications.hhmm(from)}–${Notifications.hhmm(to)}" else Notifications.hhmm(from)
+        val place = real.firstNotNullOfOrNull { it.place }
+        val marked = g.moments.count { it.markId != null }
+        val note = listOfNotNull(span, place, if (marked > 0) "★ segnato" else null).joinToString(" · ")
+        if (g.conv >= 0) DayGroup(ranges[g.conv].third, note, g.moments)
+        else if (real.isEmpty() && g.moments.all { it.gap }) DayGroup("Non registrato", "", g.moments)
+        else DayGroup(partOfDay(from) + " · " + span, listOfNotNull(place, if (marked > 0) "★ segnato" else null).joinToString(" · "), g.moments)
     }
 }
 
@@ -223,6 +271,7 @@ private fun gapReason(r: String) = when (r) {
     "chiamata" -> "eri al telefono"
     "app aggiornata" -> "l'app si stava aggiornando"
     "telefono riavviato" -> "il telefono si è riavviato"
+    "pausa privacy" -> "l'avevi messo in pausa"
     else -> "Android ha chiuso l'app"
 }
 
@@ -274,9 +323,12 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
                 ready = Models.vadReady(ctx) && hasMic(ctx),
                 state = when {
                     stalled -> RecState.STALLED
+                    wanted && alive && Pause.active(ctx) -> RecState.PAUSED
                     wanted && alive -> RecState.LISTENING
                     else -> RecState.OFF
                 },
+                pausedUntil = Pause.until(ctx).takeIf { it > 0 }?.let { Notifications.hhmm(it) },
+                marksToday = db.marksOfDay(Db.today()).size,
                 stalledSince = if (stalled) Notifications.hhmm(prefs.lastHeartbeat) else null,
                 level = 0f, speaking = false,
                 speechMinutes = h.third,
@@ -309,6 +361,22 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             } catch (e: Exception) {
                 Toast.makeText(ctx, "Non riesco ad avviare: ${e.message}", Toast.LENGTH_LONG).show()
             }
+        },
+        onMark = {
+            val hm = Marks.add(ctx)
+            base = base?.let { it.copy(marksToday = it.marksToday + 1) }
+            Toast.makeText(ctx, "★ Segnato alle $hm", Toast.LENGTH_SHORT).show()
+        },
+        onPause = { min ->
+            if (min == 0) RecorderService.stop(ctx)
+            else if (Pause.start(ctx, min)) {
+                val until = Pause.until(ctx)
+                base = base?.copy(state = RecState.PAUSED, pausedUntil = Notifications.hhmm(until))
+            }
+        },
+        onResume = {
+            Pause.resume(ctx)
+            base = base?.copy(state = RecState.LISTENING, pausedUntil = null)
         },
         onSetup = onSetup,
         onOpenToday = { onDay(Db.today()) },
@@ -443,7 +511,7 @@ private fun yesterdayUi(ctx: Context, day: String = Assistant.yesterday()): Yest
                 dateLabel = label, state = AnState.READY,
                 note = "${a.parlatoMin} minuti di parlato" + generatedAt(a.generato),
                 giornata = a.giornata,
-                sections = a.sezioni.map { sec -> sec.titolo to sec.voci.map { Entry(it.ora, it.testo, kindLabel(it.tipo)) } },
+                sections = a.sezioni.map { sec -> sec.titolo to sec.voci.map { Entry(it.ora, it.testo, if (it.segnato) "★ Segnato" else kindLabel(it.tipo)) } },
                 tomorrow = a.domani,
                 verify = a.daVerificare.map { Entry(it.ora, it.testo) },
             )
@@ -515,6 +583,7 @@ private fun partOfDay(ms: Long): String {
 private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (String) -> Unit, onArea: (String) -> Unit = {}) {
     val ctx = LocalContext.current
     val db = remember { Db.get(ctx) }
+    val scope = rememberCoroutineScope()
     var ui by remember { mutableStateOf<DayUi?>(null) }
     var plain by remember { mutableStateOf("") }
     val dbVersion = remember(tick) { db.version }
@@ -524,8 +593,9 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
             val segs = db.segmentsOfDay(day)
             val gaps = db.gapsOfDay(day)
             val words = wordsOf(segs)
-            val all = momentsOf(segs, gaps, Speakers.voiceMap(ctx), PlacesLocator.locator(ctx, day)).sortedBy { it.first }
-            val sections = all.groupBy { partOfDay(it.first) }.map { (k, v) -> k to v.map { it.second } }
+            val all = momentsOf(segs, gaps, Speakers.voiceMap(ctx), PlacesLocator.locator(ctx, day), db.marksOfDay(day)).sortedBy { it.first }
+            val convs = Assistant.analysis(ctx, day)?.conversazioni.orEmpty()
+            val sections = groupsOf(day, all, convs)
             ui = DayUi(
                 title = dayTitle(day),
                 subtitle = "${daySubtitle(day)}. ${durationLabel(segs.sumOf { it.endMs - it.startMs })} di voce, ${"%,d".format(ITA, words)} parole",
@@ -536,7 +606,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
                 people = Assistant.commitments(ctx).filter { it.fonteGiorno == day }.map { it.persona.trim() }.filter { it.isNotBlank() }.distinct(),
                 todos = Assistant.commitments(ctx).filter { it.fonteGiorno == day }.map { TodoItem(it.id, it.testo, "", done = it.stato == "fatto", person = it.persona) },
             )
-            plain = "Lifelog, ${daySubtitle(day)}\n\n" + all.filter { !it.second.gap }.joinToString("\n\n") { "${it.second.time}\n${it.second.text}" }
+            plain = "Lifelog, ${daySubtitle(day)}\n\n" + all.filter { !it.second.gap && it.second.markId == null }.joinToString("\n\n") { "${it.second.time}\n${it.second.text}" }
         }
     }
     ui?.let { u ->
@@ -547,6 +617,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
                 ui = u.copy(todos = u.todos.map { if (it.id == id) it.copy(done = done) else it })
             },
             memory = mem.ui, onNamePlace = mem.onName,
+            onRemoveMark = { id -> scope.launch(Dispatchers.IO) { db.deleteMark(id) } },
         )
     }
 }

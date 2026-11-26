@@ -70,6 +70,10 @@ class ScreenshotTest {
 
     @Test fun today_dark() = shot("6-oggi-scuro", dark = true) { TodayScreen(today, {}, {}, {}, {}, {}, {}) }
 
+    @Test fun today_paused() = shot("5b-oggi-pausa") {
+        TodayScreen(today.copy(state = RecState.PAUSED, pausedUntil = "17:40", marksToday = 2), {}, {}, {}, {}, {}, {})
+    }
+
     @Test fun today_empty() = shot("5-oggi-vuoto") {
         TodayScreen(today.copy(state = RecState.OFF, lines = emptyList(), pending = 0, speechMinutes = 0, lastTime = null, transcribeStatus = ""), {}, {}, {}, {}, {}, {})
     }
@@ -104,14 +108,17 @@ class ScreenshotTest {
             DayUi(
                 title = "Ieri", subtitle = "24 novembre 2026. 5 h 2 min di voce, 26.120 parole", spans = spans, pending = 0,
                 sections = listOf(
-                    "Mattina" to listOf(
+                    DayGroup("Colazione: banca e contratto con Marco", "07:32–07:50 · Casa", listOf(
                         Moment("07:32–07:50", "Buongiorno. Oggi devo ricordarmi di chiamare Marco per il contratto e poi passare in banca."),
+                    )),
+                    DayGroup("Lezione di macroeconomia", "09:00–10:40 · Università · ★ segnato", listOf(
                         Moment("09:00–10:00", "Il punto chiave è che la domanda aggregata dipende dalle aspettative, non solo dal reddito corrente."),
-                        Moment("10:12–10:40", "non registrato (28 min): eri al telefono.", gap = true),
-                    ),
-                    "Pomeriggio" to listOf(
+                        Moment("09:41", "", markId = 1),
+                        Moment("10:12–10:40", "non registrato (28 min): l'avevi messo in pausa.", gap = true),
+                    )),
+                    DayGroup("Pomeriggio · 12:25–13:10", "", listOf(
                         Moment("12:25–13:10", "Pranzo con Giulia: aggiungere all'app un riassunto della settimana ogni domenica sera."),
-                    ),
+                    )),
                 )
             ),
             onBack = {}, onShare = {}, startOnStory = false
