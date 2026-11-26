@@ -68,6 +68,12 @@ class GitHub(private val token: String, private val repo: String) {
 
     /** Verifica token e permessi sul repository. */
     fun check(): String {
+        // Un token "classico" (ghp_) apre TUTTI i repository dell'account, compresa l'app
+        // pubblica: chi lo rubasse dal telefono potrebbe cambiarne il codice.
+        // Accettiamo solo token fine-grained, limitabili al solo repository dei dati.
+        if (!token.startsWith("github_pat_")) throw IOException(
+            "Serve un token fine-grained (inizia con github_pat_), limitato al solo $repo con Contents in lettura e scrittura"
+        )
         val c = URL("https://api.github.com/repos/$repo").openConnection() as HttpURLConnection
         c.setRequestProperty("Authorization", "Bearer $token")
         c.setRequestProperty("Accept", "application/vnd.github+json")
@@ -79,7 +85,8 @@ class GitHub(private val token: String, private val repo: String) {
             val canPush = j.optJSONObject("permissions")?.optBoolean("push") ?: false
             if (!j.optBoolean("private")) throw IOException("Il repository è pubblico: rendilo privato prima di inviare le trascrizioni")
             if (!canPush) throw IOException("Il token può leggere ma non scrivere: serve Contents in lettura e scrittura")
-            return "Connesso a $repo"
+            val exp = c.getHeaderField("github-authentication-token-expiration")?.take(10)
+            return "Connesso a $repo" + (exp?.let { " · token valido fino al $it" } ?: "")
         } finally { c.disconnect() }
     }
 
