@@ -34,25 +34,33 @@ object Throttle {
         return Battery(temp, pct, plugged)
     }
 
+    /** Limiti che valgono anche quando Iaco forza la trascrizione: proteggono la batteria. */
+    const val HARD_TEMP_C = 42f
+    private const val HARD_MIN_PERCENT = 15
+
     /** null = si può lavorare; altrimenti il motivo per aspettare. */
     fun blockReason(ctx: Context, manual: Boolean): String? {
         val p = Prefs(ctx)
         val b = battery(ctx)
+        val pm = ctx.getSystemService(PowerManager::class.java)
+        if (manual || p.forceTranscribe) {
+            if (b.tempC >= HARD_TEMP_C) {
+                return "Pausa di sicurezza: batteria a %.1f°C, riprendo sotto i %.0f°C".format(b.tempC, HARD_TEMP_C)
+            }
+            if (pm.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) return "Pausa di sicurezza: il telefono è molto caldo"
+            if (!b.plugged && b.percent < HARD_MIN_PERCENT) return "Batteria al ${b.percent}%: metti in carica per continuare"
+            return null
+        }
         if (b.tempC >= p.maxBatteryTemp) {
             return "Pausa: batteria a %.1f°C (limite %.1f°C)".format(b.tempC, p.maxBatteryTemp)
         }
-        val pm = ctx.getSystemService(PowerManager::class.java)
         if (pm.currentThermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
             return "Pausa: il telefono è caldo"
         }
         if (pm.isPowerSaveMode && !b.plugged) return "Pausa: risparmio energetico attivo"
-        if (!manual) {
-            if (p.onlyWhileCharging && !b.plugged) return "In attesa: trascrivo quando metti in carica"
-            if (p.onlyWhileCharging && p.minChargePercent > 0 && b.percent < p.minChargePercent) {
-                return "In attesa: carica al ${b.percent}%, comincio dal ${p.minChargePercent}%"
-            }
-        } else if (!b.plugged && b.percent < 30) {
-            return "Batteria sotto il 30%: metti in carica per trascrivere"
+        if (p.onlyWhileCharging && !b.plugged) return "In attesa: trascrivo quando metti in carica"
+        if (p.onlyWhileCharging && p.minChargePercent > 0 && b.percent < p.minChargePercent) {
+            return "In attesa: carica al ${b.percent}%, comincio dal ${p.minChargePercent}%"
         }
         return null
     }
@@ -69,7 +77,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         val ctx = applicationContext
         val prefs = Prefs(ctx)
-        val manual = inputData.getBoolean(KEY_MANUAL, false)
+        val manual = prefs.forceTranscribe
         // Se il motore scelto non è ancora pronto (es. Whisper in download) uso Parakeet.
         val engine = listOf(prefs.engine, Engine.PARAKEET).firstOrNull { AsrFactory.ready(ctx, it) } ?: run {
             prefs.transcribeStatus = "Il modello di trascrizione non è ancora scaricato"
@@ -78,13 +86,17 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         val db = Db.get(ctx)
         if (db.pendingCount() == 0) {
             prefs.transcribeStatus = "Tutto trascritto"
+            // Forzata: passa subito alla rifinitura con Whisper, anche senza carica.
+            if (prefs.forceTranscribe) runCatching { Refine.schedule(ctx, 0, ExistingWorkPolicy.REPLACE) }
             return Result.success()
         }
         Throttle.blockReason(ctx, manual)?.let {
             prefs.transcribeStatus = it
-            schedule(ctx, delayMinutes = 15, policy = ExistingWorkPolicy.APPEND_OR_REPLACE)
+            schedule(ctx, delayMinutes = if (manual) 5 else 15, policy = ExistingWorkPolicy.APPEND_OR_REPLACE)
             return Result.success()
         }
+        // Forzata: notifica fissa con "Ferma", così Android non la sospende a schermo spento.
+        if (prefs.forceTranscribe) runCatching { setForeground(Force.foreground(ctx, "Trascrivo con ${engine.label}…")) }
 
         val executor = Executors.newSingleThreadExecutor { r ->
             Thread({
@@ -101,14 +113,16 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             Outcome.DONE -> {
                 prefs.transcribeStatus = "Tutto trascritto"
                 DriveSync.syncSoon(ctx)
-                runCatching { Refine.schedule(ctx) }
+                runCatching {
+                    if (prefs.forceTranscribe) Refine.schedule(ctx, 0, ExistingWorkPolicy.REPLACE) else Refine.schedule(ctx)
+                }
                 runCatching { it.iaco.lifelog.data.Assistant.uploadSoon(ctx) } // testo nuovo: subito a Claude
             }
             Outcome.MORE -> {
                 DriveSync.syncSoon(ctx)
                 schedule(ctx, 0, ExistingWorkPolicy.APPEND_OR_REPLACE, manual)
             }
-            Outcome.PAUSED -> schedule(ctx, 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
+            Outcome.PAUSED -> schedule(ctx, if (manual) 5 else 15, ExistingWorkPolicy.APPEND_OR_REPLACE, manual)
             Outcome.STOPPED -> {}
         }
         return Result.success()
@@ -147,6 +161,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 group.forEach { g -> g.audioPath?.let { File(it).delete() } }
                 done += group.size
                 prefs.transcribeStatus = "Trascrivo con ${engine.label}… ${db.pendingCount()} pezzi rimasti"
+                if (manual && prefs.forceTranscribe) runCatching { setForeground(Force.foreground(ctx, prefs.transcribeStatus)) }
                 setProgressAsync(workDataOf("done" to done))
                 if (System.currentTimeMillis() > deadline) return Outcome.MORE
             }
@@ -171,18 +186,19 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
             manual: Boolean = false,
         ) {
             val prefs = Prefs(ctx)
+            val forced = manual || prefs.forceTranscribe
             val constraints = Constraints.Builder()
-                .setRequiresCharging(prefs.onlyWhileCharging && !manual)
+                .setRequiresCharging(prefs.onlyWhileCharging && !forced)
                 .build()
             val req = OneTimeWorkRequestBuilder<TranscribeWorker>()
                 .setConstraints(constraints)
                 .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
-                .setInputData(workDataOf(KEY_MANUAL to manual))
+                .setInputData(workDataOf(KEY_MANUAL to forced))
                 .build()
             WorkManager.getInstance(ctx).enqueueUniqueWork(NAME, policy, req)
         }
 
-        /** Pulsante "Trascrivi ora": ignora l'attesa della ricarica, non i limiti di temperatura. */
-        fun runNow(ctx: Context) = schedule(ctx, 0, ExistingWorkPolicy.REPLACE, manual = true)
+        /** Pulsante "Trascrivi adesso": vedi [Force]. */
+        fun runNow(ctx: Context) = Force.start(ctx)
     }
 }

@@ -59,6 +59,8 @@ import it.iaco.lifelog.RecorderService
 import it.iaco.lifelog.Segment
 import it.iaco.lifelog.Throttle
 import it.iaco.lifelog.TranscribeWorker
+import it.iaco.lifelog.Refine
+import it.iaco.lifelog.Force
 import it.iaco.lifelog.Watchdog
 import it.iaco.lifelog.people.Speakers
 import it.iaco.lifelog.memory.Places as PlacesLocator
@@ -264,6 +266,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
             val stalled = Watchdog.isStalled(ctx)
             val alive = RecorderService.isAlive(ctx)
             val pending = db.pendingCount()
+            val refinePending = runCatching { Refine.queue(ctx).size }.getOrDefault(0)
             val brief = briefOf(ctx)
             TodayUi(
                 brief = brief,
@@ -280,7 +283,9 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
                 pending = pending,
                 pendingMinutes = db.pendingSeconds() / 60,
                 transcribeStatus = prefs.transcribeStatus,
-                canTranscribeNow = pending > 0 && Models.parakeetReady(ctx),
+                canTranscribeNow = (pending > 0 && Models.parakeetReady(ctx)) || (refinePending > 0 && Models.whisperReady(ctx)),
+                forcing = prefs.forceTranscribe,
+                refinePending = refinePending,
                 lines = h.first,
                 lastTime = h.second,
                 crash = null,
@@ -309,7 +314,12 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
         onOpenToday = { onDay(Db.today()) },
         onTranscribeNow = {
             TranscribeWorker.runNow(ctx)
-            Toast.makeText(ctx, "Trascrizione avviata. Si ferma se la batteria si scalda.", Toast.LENGTH_SHORT).show()
+            base = base?.copy(forcing = true, transcribeStatus = "Avvio la trascrizione…")
+            Toast.makeText(ctx, "Continua anche senza carica finché non la fermi.", Toast.LENGTH_SHORT).show()
+        },
+        onStopTranscribe = {
+            Force.stop(ctx)
+            base = base?.copy(forcing = false)
         },
         onShareCrash = { shareText(ctx, crash.orEmpty(), "Condividi l'errore") },
         onDismissCrash = { CrashLog.clear(ctx); crash = null },
