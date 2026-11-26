@@ -63,6 +63,7 @@ object Throttle {
             return "In attesa: carica al ${b.percent}%, comincio dal ${p.minChargePercent}%"
         }
         return null
+    }
 }
 
 /**
