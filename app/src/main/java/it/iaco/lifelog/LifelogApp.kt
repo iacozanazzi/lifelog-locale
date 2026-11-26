@@ -14,5 +14,7 @@ class LifelogApp : Application() {
         runCatching { it.iaco.lifelog.people.Speakers.autoDownload(this) }
         // Seconda passata con Whisper: modello scaricato da solo, lavoro in coda per la prossima carica.
         runCatching { Refine.ensureWhisper(this); Refine.schedule(this) }
+        // Invii notturni a Claude: sveglie da riarmare a ogni avvio (riavvio e aggiornamento le cancellano).
+        runCatching { it.iaco.lifelog.data.Assistant.schedule(this) }
     }
 }

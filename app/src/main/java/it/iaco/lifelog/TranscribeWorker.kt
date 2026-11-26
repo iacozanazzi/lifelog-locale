@@ -102,6 +102,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 prefs.transcribeStatus = "Tutto trascritto"
                 DriveSync.syncSoon(ctx)
                 runCatching { Refine.schedule(ctx) }
+                runCatching { it.iaco.lifelog.data.Assistant.uploadSoon(ctx) } // testo nuovo: subito a Claude
             }
             Outcome.MORE -> {
                 DriveSync.syncSoon(ctx)

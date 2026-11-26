@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit
 object Assistant {
     const val DEFAULT_REPO = "iacozanazzi/lifelog-dati"
     private const val SP = "lifelog_assistant"
-    private val zone get() = ZoneId.systemDefault()
+    val zone: ZoneId get() = ZoneId.systemDefault()
     private val iso = DateTimeFormatter.ISO_OFFSET_DATE_TIME
     private val hms = DateTimeFormatter.ofPattern("HH:mm:ss")
     private val hm = DateTimeFormatter.ofPattern("HH:mm")
@@ -233,9 +233,12 @@ object Assistant {
 
     // ------------------------------------------------------------- pianificazione
 
-    private const val UPLOAD_DAILY = "assistant_upload_daily"
+    // Nomi vecchi (v20-v49): erano periodici con UPDATE, che a ogni apertura spostava l'orario. Si cancellano.
+    private const val UPLOAD_DAILY_OLD = "assistant_upload_daily"
+    private const val FETCH_DAILY_OLD = "assistant_fetch_daily"
+    private const val UPLOAD_DAILY = "assistant_upload_nightly"
     private const val UPLOAD_NOW = "assistant_upload_now"
-    private const val FETCH_DAILY = "assistant_fetch_daily"
+    private const val FETCH_DAILY = "assistant_fetch_morning"
     private const val FETCH_NOW = "assistant_fetch_now"
     const val KEY_RESULT = "result"
 
@@ -248,16 +251,33 @@ object Assistant {
 
     private val net = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
+    /**
+     * Invii notturni: alle 23:00 e alle 2:45, prima dell'analisi delle 3:17. La sveglia di sistema
+     * (setAndAllowWhileIdle) scatta anche con il telefono in riposo, dove WorkManager può tardare di ore;
+     * il lavoro periodico resta come riserva. Da chiamare all'avvio del processo e all'apertura dell'app.
+     */
+    val UPLOAD_TIMES: List<LocalTime> = listOf(LocalTime.of(23, 0), LocalTime.of(2, 45))
+    val FETCH_TIME: LocalTime = LocalTime.of(7, 0)
+
+    fun nextAt(times: List<LocalTime>, from: LocalDateTime = LocalDateTime.now(zone)): LocalDateTime =
+        times.map { t -> from.toLocalDate().atTime(t).let { if (it.isAfter(from)) it else it.plusDays(1) } }.min()
+
     fun schedule(ctx: Context) {
         if (!isConfigured(ctx)) return
+        runCatching { NightAlarm.arm(ctx) }
         val wm = WorkManager.getInstance(ctx)
+        val sp = sp(ctx)
+        if (!sp.getBoolean("periodic_v50", false)) {
+            wm.cancelUniqueWork(UPLOAD_DAILY_OLD); wm.cancelUniqueWork(FETCH_DAILY_OLD)
+            sp.edit().putBoolean("periodic_v50", true).apply()
+        }
         wm.enqueueUniquePeriodicWork(
-            UPLOAD_DAILY, ExistingPeriodicWorkPolicy.UPDATE,
+            UPLOAD_DAILY, ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<UploadWorker>(24, TimeUnit.HOURS)
                 .setInitialDelay(delayTo(23, 0), TimeUnit.MINUTES).setConstraints(net).build()
         )
         wm.enqueueUniquePeriodicWork(
-            FETCH_DAILY, ExistingPeriodicWorkPolicy.UPDATE,
+            FETCH_DAILY, ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<FetchWorker>(24, TimeUnit.HOURS)
                 .setInitialDelay(delayTo(7, 0), TimeUnit.MINUTES).setConstraints(net).build()
         )
