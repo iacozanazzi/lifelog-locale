@@ -56,24 +56,15 @@ data class AreaLine(val area: String, val title: String, val sub: String)
 // =============================================================== Scheda in Oggi
 
 /**
- * Scheda "Seral e università" in Oggi: la cosa più urgente in grande,
- * poi una riga per area. Ogni riga apre la schermata dell'area.
+ * Righe di Seral e università dentro "Da tenere d'occhio" in Oggi,
+ * dalla più urgente. Ogni riga apre la schermata dell'area.
  */
 @Composable
 fun AreeCard(lines: List<AreaLine>, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
     if (lines.isEmpty()) return
-    val c = Life.c
-    Column(modifier.padding(top = 18.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill).padding(vertical = 8.dp)) {
-        Text("Seral e università", style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text, modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 10.dp))
+    Column(modifier.fillMaxWidth()) {
         lines.forEachIndexed { i, l ->
-            Column(Modifier.fillMaxWidth().clickable { onOpen(l.area) }.padding(horizontal = 18.dp, vertical = 8.dp)) {
-                Text(
-                    l.title,
-                    style = if (i == 0) Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp) else Type.rowTitle,
-                    color = c.text,
-                )
-                if (l.sub.isNotBlank()) Text(l.sub, style = Type.meta, color = c.second, modifier = Modifier.padding(top = 2.dp))
-            }
+            WatchRow(if (l.area == "seral") "Seral" else "Università", l.title, l.sub) { onOpen(l.area) }
         }
     }
 }

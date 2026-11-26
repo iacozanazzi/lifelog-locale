@@ -148,7 +148,7 @@ fun App(resumeTick: Int) {
                         is Route.Voice -> VoiceRoute(r.id, onBack = { route = Route.People })
                         Route.Settings -> SettingsRoute(tick, onSetup = { route = Route.Setup }, onCompare = { route = Route.Compare }, onBack = { route = Route.Main })
                         Route.Main -> when (tab) {
-                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onPerson = openPerson, onArea = openArea, onWeek = { route = Route.Week })
+                            Tab.TODAY -> TodayRoute(tick, onSetup = { route = Route.Setup }, onDay = { route = Route.Day(it) }, onSettings = { route = Route.Settings }, onPerson = openPerson, onArea = openArea, onWeek = { route = Route.Week }, onTodos = { tab = Tab.TODO })
                             Tab.DIARY -> DaysRoute(tick, onDay = { route = Route.Day(it) })
                             Tab.TODO -> TodoRoute(tick, onSetup = { route = Route.Settings })
                             Tab.SEARCH -> SearchRoute(searchQuery, onQuery = { searchQuery = it }, onDay = { route = Route.Day(it) }, onPerson = openPerson, onPeople = { route = Route.People })
@@ -231,7 +231,7 @@ private fun sentences(text: String): List<String> =
     text.split(Regex("(?<=[.!?…])\\s+")).map { it.trim() }.filter { it.length > 1 }
 
 @Composable
-private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit, onPerson: (String) -> Unit = {}, onArea: (String) -> Unit = {}, onWeek: () -> Unit = {}) {
+private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, onSettings: () -> Unit, onPerson: (String) -> Unit = {}, onArea: (String) -> Unit = {}, onWeek: () -> Unit = {}, onTodos: () -> Unit = {}) {
     val ctx = LocalContext.current
     val prefs = remember { Prefs(ctx) }
     val db = remember { Db.get(ctx) }
@@ -321,6 +321,7 @@ private fun TodayRoute(tick: Int, onSetup: () -> Unit, onDay: (String) -> Unit, 
         onOpenYesterday = { onDay(Assistant.yesterday()) },
         memory = memory, onMemento = onDay, onWeek = onWeek,
         onPerson = onPerson,
+        onTodos = onTodos,
         cards = { AreeTodayCard(tick, onArea) },
     )
 }
