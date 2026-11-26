@@ -88,32 +88,15 @@ data class QuestionsUi(val questions: List<QuestionRow>, val people: List<String
 
 // =============================================================== Oggi
 
-@Composable
-private fun MemCard(title: String, text: String, link: String, onClick: () -> Unit) {
-    val c = Life.c
-    Column(
-        Modifier.padding(top = 14.dp).fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(c.fill)
-            .clickable(onClick = onClick).padding(18.dp)
-    ) {
-        Text(title, style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.text)
-        Text(text, style = Type.section.copy(fontSize = 21.sp, lineHeight = 26.sp), color = c.text, modifier = Modifier.padding(top = 6.dp))
-        Text(link, style = Type.meta.copy(fontWeight = FontWeight.Bold), color = c.accent, modifier = Modifier.padding(top = 14.dp))
-    }
-}
-
-/** Schede della memoria in Oggi, sotto "Da ieri". */
+/** Righe della memoria in Oggi, dentro "Da tenere d'occhio". */
 fun LazyListScope.memoryCards(s: MemoryTodayUi?, onMemento: (String) -> Unit, onWeek: () -> Unit) {
     if (s == null) return
-    if (s.mementoText != null && s.mementoDay != null) item("memoria-anno") {
-        MemCard(s.mementoLabel ?: "Un anno fa oggi", s.mementoText, "Apri quel giorno") { onMemento(s.mementoDay) }
-    }
     item("memoria-settimana") {
-        MemCard(
-            "Questa settimana",
-            s.weekText.ifBlank { "Tempo per area, abitudini, sonno e passi compariranno qui." },
-            if (s.weekText.isBlank()) "Collega Samsung Health e i luoghi" else "Vedi la settimana",
-            onWeek,
-        )
+        if (s.weekText.isBlank()) WatchRow("Questa settimana", "Tempo, abitudini, sonno e passi", "Collega Samsung Health e i luoghi", onClick = onWeek)
+        else WatchRow("Questa settimana", s.weekText, onClick = onWeek)
+    }
+    if (s.mementoText != null && s.mementoDay != null) item("memoria-anno") {
+        WatchRow(s.mementoLabel ?: "Un anno fa oggi", s.mementoText) { onMemento(s.mementoDay) }
     }
 }
 
