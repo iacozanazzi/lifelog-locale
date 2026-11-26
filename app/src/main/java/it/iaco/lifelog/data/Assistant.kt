@@ -93,9 +93,17 @@ object Assistant {
         if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
         sb.append("\n")
         val voices = Speakers.voiceMap(db)
+        // Luoghi (se attivi): una riga quando cambia il posto, solo il nome, mai le coordinate.
+        val placeOf: (Long) -> String? = ctx?.let { c -> runCatching { it.iaco.lifelog.memory.Places.locator(c, day) }.getOrNull() } ?: { _ -> null }
+        var lastPlace: String? = null
         for (s in segs) {
             val t = s.text?.trim().orEmpty()
             if (t.isEmpty()) continue
+            val place = placeOf(s.startMs)
+            if (place != lastPlace) {
+                sb.append("\n— luogo: ").append(place ?: "in giro").append(" —\n")
+                lastPlace = place
+            }
             val who = Speakers.label(s.voice, voices)
             sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ").append(who).append(": ").append(t.replace("\n", " ")).append("\n")
         }

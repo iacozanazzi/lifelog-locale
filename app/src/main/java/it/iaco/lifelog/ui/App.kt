@@ -61,6 +61,7 @@ import it.iaco.lifelog.Throttle
 import it.iaco.lifelog.TranscribeWorker
 import it.iaco.lifelog.Watchdog
 import it.iaco.lifelog.people.Speakers
+import it.iaco.lifelog.memory.Places as PlacesLocator
 import it.iaco.lifelog.people.Voice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -197,10 +198,16 @@ private fun dayTitle(day: String): String {
 private fun daySubtitle(day: String): String =
     LocalDate.parse(day).format(DateTimeFormatter.ofPattern("d MMMM yyyy", ITA))
 
-private fun momentsOf(segs: List<Segment>, gaps: List<Gap>, voices: Map<String, Voice> = emptyMap()): List<Pair<Long, Moment>> =
-    Exporter.paragraphs(segs, byVoice = voices.isNotEmpty()).map { p ->
+private fun momentsOf(
+    segs: List<Segment>, gaps: List<Gap>, voices: Map<String, Voice> = emptyMap(), placeOf: (Long) -> String? = { null },
+): List<Pair<Long, Moment>> {
+    var lastPlace: String? = null
+    return Exporter.paragraphs(segs, byVoice = voices.isNotEmpty(), placeOf = placeOf).map { p ->
         val who = if (voices.isEmpty()) "" else Speakers.label(p.voice, voices).takeIf { w -> w != "?" }?.let { w -> ", $w" }.orEmpty()
-        p.startMs to Moment("${Notifications.hhmm(p.startMs)}–${Notifications.hhmm(p.endMs)}$who", p.text)
+        // Il luogo si scrive quando cambia, non a ogni paragrafo.
+        val where = p.place?.takeIf { it != lastPlace }?.let { " · $it" }.orEmpty()
+        lastPlace = p.place
+        p.startMs to Moment("${Notifications.hhmm(p.startMs)}–${Notifications.hhmm(p.endMs)}$who$where", p.text)
     } + gaps.map {
         it.startMs to Moment(
             "${Notifications.hhmm(it.startMs)}–${Notifications.hhmm(it.endMs)}",
@@ -208,6 +215,7 @@ private fun momentsOf(segs: List<Segment>, gaps: List<Gap>, voices: Map<String, 
             gap = true
         )
     }
+}
 
 private fun gapReason(r: String) = when (r) {
     "chiamata" -> "eri al telefono"
@@ -504,7 +512,7 @@ private fun DayRoute(day: String, tick: Int, onBack: () -> Unit, onPerson: (Stri
             val segs = db.segmentsOfDay(day)
             val gaps = db.gapsOfDay(day)
             val words = wordsOf(segs)
-            val all = momentsOf(segs, gaps, Speakers.voiceMap(ctx)).sortedBy { it.first }
+            val all = momentsOf(segs, gaps, Speakers.voiceMap(ctx), PlacesLocator.locator(ctx, day)).sortedBy { it.first }
             val sections = all.groupBy { partOfDay(it.first) }.map { (k, v) -> k to v.map { it.second } }
             ui = DayUi(
                 title = dayTitle(day),
