@@ -33,6 +33,11 @@ class Prefs(context: Context) {
         get() = sp.getFloat("max_temp", 37.5f)
         set(v) = sp.edit().putFloat("max_temp", v).apply()
 
+    /** Trascrizione forzata da Iaco: continua anche senza carica finché non finisce o lui la ferma. */
+    var forceTranscribe: Boolean
+        get() = sp.getBoolean("force_transcribe", false)
+        set(v) = sp.edit().putBoolean("force_transcribe", v).apply()
+
     /** Ultimo messaggio di stato della trascrizione, da mostrare in app. */
     var transcribeStatus: String
         get() = sp.getString("transcribe_status", "") ?: ""

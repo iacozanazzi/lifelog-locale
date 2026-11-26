@@ -20,6 +20,7 @@ object Notifications {
     const val ID_RECORDING = 1
     const val ID_ALERT = 2
     const val ID_DOWNLOAD = 3
+    const val ID_TRANSCRIBE = 4
 
     const val EXTRA_RESUME = "resume_recording"
 
@@ -64,6 +65,24 @@ object Notifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .apply { if (progress >= 0) setProgress(100, progress, false) }
+            .build()
+
+    /** Trascrizione forzata: resta visibile finché lavora, con il tasto per fermarla. */
+    fun forced(ctx: Context, text: String) =
+        NotificationCompat.Builder(ctx, CH_WORK)
+            .setSmallIcon(R.drawable.ic_notif)
+            .setContentTitle("Trascrivo anche senza carica")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openApp(ctx, false))
+            .addAction(
+                0, "Ferma",
+                PendingIntent.getBroadcast(
+                    ctx, 7, Intent(ctx, ForceStopReceiver::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+            )
             .build()
 
     /** Avviso ben visibile: tocca per riprendere la registrazione. */

@@ -59,6 +59,10 @@ data class TodayUi(
     val pendingMinutes: Long,
     val transcribeStatus: String,
     val canTranscribeNow: Boolean,
+    /** Iaco ha forzato la trascrizione: continua anche senza carica finché lui non la ferma. */
+    val forcing: Boolean = false,
+    /** Blocchi che Whisper deve ancora rifinire. */
+    val refinePending: Int = 0,
     /** Ultime frasi trascritte, dalla più vecchia alla più recente. */
     val lines: List<String>,
     val lastTime: String?,
@@ -136,6 +140,7 @@ fun TodayScreen(
     onSetup: () -> Unit,
     onOpenToday: () -> Unit,
     onTranscribeNow: () -> Unit,
+    onStopTranscribe: () -> Unit = {},
     onShareCrash: () -> Unit,
     onDismissCrash: () -> Unit,
     onSettings: () -> Unit = {},
@@ -358,11 +363,16 @@ fun TodayScreen(
                 )
                 val sub = when {
                     !s.ready -> "Mancano pochi passi"
+                    s.forcing -> s.transcribeStatus.ifBlank { "Trascrivo…" }
                     s.pending > 0 -> "${s.pendingMinutes.coerceAtLeast(1)} min da trascrivere"
+                    s.refinePending > 0 -> "Whisper deve rifinire ${s.refinePending} blocchi"
                     else -> "Tutto trascritto"
                 }
-                Text(sub, style = Type.meta, color = c.second, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (s.ready && s.canTranscribeNow) TextAction("Trascrivi adesso", onTranscribeNow)
+                Text(sub, style = Type.meta, color = c.second, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                when {
+                    s.ready && s.forcing -> TextAction("Ferma la trascrizione", onStopTranscribe)
+                    s.ready && s.canTranscribeNow -> TextAction("Trascrivi adesso", onTranscribeNow)
+                }
             }
             if (s.ready) {
                 Spacer(Modifier.width(12.dp))

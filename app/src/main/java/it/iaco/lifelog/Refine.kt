@@ -65,10 +65,10 @@ object Refine {
 
     fun accept(whisper: String): Boolean = whisper.isNotBlank() && !HALLUCINATION.containsMatchIn(whisper)
 
-    /** Parte da sola in carica; se la trascrizione è ancora in corso, aspetta. */
+    /** Parte da sola in carica (o subito, se Iaco l'ha forzata); se la trascrizione è ancora in corso, aspetta. */
     fun schedule(ctx: Context, delayMinutes: Long = 0, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
         val req = OneTimeWorkRequestBuilder<RefineWorker>()
-            .setConstraints(Constraints.Builder().setRequiresCharging(true).build())
+            .setConstraints(Constraints.Builder().setRequiresCharging(!Prefs(ctx).forceTranscribe).build())
             .setInitialDelay(delayMinutes, TimeUnit.MINUTES)
             .build()
         WorkManager.getInstance(ctx).enqueueUniqueWork(NAME, policy, req)
@@ -92,19 +92,28 @@ class RefineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         val ctx = applicationContext
         val prefs = Prefs(ctx)
         runCatching { Refine.cleanup(ctx) }
-        if (Refine.queue(ctx).isEmpty()) return Result.success()
-        if (!Models.whisperReady(ctx)) { Refine.ensureWhisper(ctx); Refine.schedule(ctx, 60, ExistingWorkPolicy.APPEND_OR_REPLACE); return Result.success() }
+        val forced = prefs.forceTranscribe
+        if (Refine.queue(ctx).isEmpty()) { Force.finished(ctx); return Result.success() }
+        if (!Models.whisperReady(ctx)) {
+            if (forced) prefs.transcribeStatus = "Aspetto che Whisper finisca di scaricarsi"
+            Refine.ensureWhisper(ctx); Refine.schedule(ctx, if (forced) 10 else 60, ExistingWorkPolicy.APPEND_OR_REPLACE); return Result.success()
+        }
         val db = Db.get(ctx)
         // Prima la trascrizione di Parakeet, poi la rifinitura: mai due modelli grandi insieme.
-        if (db.pendingCount() > 0 || Throttle.blockReason(ctx, manual = false) != null) {
-            Refine.schedule(ctx, 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        val block = Throttle.blockReason(ctx, manual = false)
+        if (db.pendingCount() > 0 || block != null) {
+            if (forced && block != null) prefs.transcribeStatus = block
+            Refine.schedule(ctx, if (forced) 5 else 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
             return Result.success()
         }
+        if (forced) runCatching { setForeground(Force.foreground(ctx, "Rifinisco con Whisper…")) }
         val executor = Executors.newSingleThreadExecutor { r ->
             Thread({ Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "lifelog-refine")
         }
         val more = try {
             withContext(executor.asCoroutineDispatcher()) { run(ctx, db, prefs) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Log.e("Refine", "errore", e)
             prefs.transcribeStatus = "Rifinitura con Whisper in pausa: ${e.message}"
@@ -113,8 +122,12 @@ class RefineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         } finally {
             executor.shutdown()
         }
-        if (more) Refine.schedule(ctx, if (Throttle.blockReason(ctx, false) == null && db.pendingCount() == 0) 0 else 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
-        else {
+        if (more) {
+            val block = Throttle.blockReason(ctx, false)
+            if (prefs.forceTranscribe && block != null) prefs.transcribeStatus = block
+            Refine.schedule(ctx, if (block == null && db.pendingCount() == 0) 0 else if (prefs.forceTranscribe) 5 else 15, ExistingWorkPolicy.APPEND_OR_REPLACE)
+        } else {
+            Force.finished(ctx)
             prefs.transcribeStatus = "Tutto trascritto e rifinito con Whisper"
             runCatching { Assistant.uploadSoon(ctx) }
         }
@@ -137,6 +150,7 @@ class RefineWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
                 }
                 f.delete()
                 prefs.transcribeStatus = "Rifinisco con Whisper… ${Refine.queue(ctx).size} blocchi rimasti"
+                if (prefs.forceTranscribe) runCatching { setForeground(Force.foreground(ctx, prefs.transcribeStatus)) }
             }
         } finally {
             asr.release()

@@ -75,6 +75,9 @@
             tools:node="merge" />
 
         <receiver
+            android:name=".ForceStopReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".data.NightAlarmReceiver"
             android:exported="false" />
         <receiver
