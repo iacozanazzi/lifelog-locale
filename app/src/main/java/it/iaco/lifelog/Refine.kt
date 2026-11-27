@@ -63,7 +63,7 @@ object Refine {
         RegexOption.IGNORE_CASE
     )
 
-    fun accept(whisper: String): Boolean = whisper.isNotBlank() && !HALLUCINATION.containsMatchIn(whisper)
+    fun accept(whisper: String): Boolean = whisper.isNotBlank() && !HALLUCINATION.containsMatchIn(whisper) && !Hallucination.isFake(whisper)
 
     /** Parte da sola in carica (o subito, se Iaco l'ha forzata); se la trascrizione è ancora in corso, aspetta. */
     fun schedule(ctx: Context, delayMinutes: Long = 0, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {

@@ -90,3 +90,32 @@ class VoiceBankTest {
         assertTrue(People.reminders(listOf(p.copy(followed = false, remote = remote.copy(dates = emptyList(), nextMeeting = null))), today).isEmpty())
     }
 }
+
+/** 27/11: due persone diverse registrate dallo stesso telefono hanno un coseno intorno a 0,55-0,65. Non devono diventare la stessa voce. */
+class VoiceBankChannelTest {
+    private val rnd = Random(11)
+    private fun rand() = Vec.norm(FloatArray(192) { rnd.nextFloat() * 2 - 1 })
+    /** Vettore con coseno circa [c] rispetto a [v]. */
+    private fun withCos(v: FloatArray, c: Float): FloatArray {
+        val r = rand(); val d = Vec.cos(v, r)
+        val o = Vec.norm(FloatArray(v.size) { r[it] - d * v[it] })
+        val s = kotlin.math.sqrt(1 - c * c)
+        return Vec.norm(FloatArray(v.size) { c * v[it] + s * o[it] })
+    }
+
+    @Test fun similarButDifferentPeopleDoNotCollapse() {
+        val bank = VoiceBank(emptyList())
+        val iaco = rand()
+        val a = bank.assign(iaco, 5.0, 1).voice
+        val other = bank.assign(withCos(iaco, 0.6f), 5.0, 2)
+        assertNotEquals(a, other.voice)
+    }
+
+    @Test fun weakMatchesDoNotMoveTheVoice() {
+        val bank = VoiceBank(emptyList())
+        val iaco = rand()
+        bank.assign(iaco, 5.0, 1)
+        repeat(50) { bank.assign(withCos(iaco, 0.72f), 5.0, 2L + it) }
+        assertTrue(Vec.cos(bank.all.first().centroid, iaco) > 0.99f)
+    }
+}

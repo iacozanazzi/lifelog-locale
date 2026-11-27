@@ -36,7 +36,7 @@ object Speakers {
     const val MODEL_MB = 29
 
     /** Sotto questa durata l'impronta non è affidabile: il pezzo eredita la voce dei vicini. */
-    const val MIN_SECONDS = 1.0
+    const val MIN_SECONDS = 1.5
 
     fun modelFile(ctx: Context) = File(Models.dir(ctx), MODEL_NAME)
     private fun okMarker(ctx: Context) = File(Models.dir(ctx), "$MODEL_NAME.ok")
@@ -160,12 +160,27 @@ object Speakers {
         val uncertain = rows.filter { it.first == null && it.second != null }.map { it.second!! }
         val noPrint = rows.count { it.first == null && it.second == null }
         val sb = StringBuilder("${rows.size} pezzi · $named con nome o Voce N · $unconfirmed voce nuova non ancora confermata · ${uncertain.size} incerti · $noPrint senza impronta (troppo corti o audio già cancellato)")
-        if (uncertain.isNotEmpty()) {
-            val lo = uncertain.count { it < 0.45f }
-            sb.append(" · incerti tra 0,35 e 0,45: $lo, tra 0,45 e 0,55: ${uncertain.size - lo}")
+        val scores = rows.mapNotNull { it.second }
+        if (scores.isNotEmpty()) {
+            val b = intArrayOf(0, 0, 0, 0, 0)
+            scores.forEach { x -> b[when { x < 0.5f -> 0; x < 0.6f -> 1; x < 0.7f -> 2; x < 0.8f -> 3; else -> 4 }]++ }
+            sb.append(" · punteggi: <0,5: ${b[0]}, 0,5-0,6: ${b[1]}, 0,6-0,7: ${b[2]}, 0,7-0,8: ${b[3]}, ≥0,8: ${b[4]}")
         }
         sb.append(" · voci in memoria: ${voices.size}")
         return sb.toString()
+    }
+
+    /**
+     * Una volta sola (27/11): le voci senza nome nate con le soglie vecchie erano tutte mescolate in "Voce 1".
+     * Si cancellano e quelle frasi tornano "?"; le voci con un nome restano.
+     */
+    private fun resetOnce(ctx: Context) {
+        if (sp(ctx).getBoolean("voices_reset_2", false)) return
+        runCatching {
+            val db = Db.get(ctx)
+            db.loadVoices().filter { it.name == null && !it.isMe }.forEach { db.moveVoice(it.id, null); db.deleteVoice(it.id) }
+        }
+        sp(ctx).edit().putBoolean("voices_reset_2", true).apply()
     }
 
     // ------------------------------------------------------------- aggancio alla trascrizione
@@ -244,6 +259,7 @@ object Speakers {
             /** null se il modello non c'è o non si carica: in quel caso l'aggancio non fa nulla. */
             fun createOrNull(ctx: Context): Labeler? {
                 if (!ready(ctx)) return null
+                resetOnce(ctx)
                 return runCatching {
                     val cfg = SpeakerEmbeddingExtractorConfig(model = modelFile(ctx).absolutePath, numThreads = 1, debug = false, provider = "cpu")
                     Labeler(ctx, SpeakerEmbeddingExtractor(config = cfg))

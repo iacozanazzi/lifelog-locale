@@ -149,7 +149,10 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                 try { speakers?.labelAll(batch) } catch (_: Throwable) {}
                 val group = Chunker.next(batch, speakers?.voices ?: emptyMap()) ?: return Outcome.DONE
                 val audio = Chunker.audioOf(group)
-                val text = if (audio.isEmpty()) "" else asr.transcribe(audio)
+                val raw = if (audio.isEmpty()) "" else asr.transcribe(audio)
+                val whisperNow = engine == Engine.WHISPER || (asr as? AutoAsr)?.lastWasWhisper == true
+                // Whisper sul silenzio o sul rumore inventa frasi come "Grazie a tutti.": si buttano.
+                val text = if (whisperNow && Hallucination.isFake(raw)) "" else raw
                 db.markGroup(group, text)
                 try { speakers?.finishGroup(group) } catch (_: Throwable) {}
                 if (audio.isNotEmpty()) Recent.save(ctx, group.first().startMs, audio)
