@@ -107,7 +107,8 @@ class VoiceBank(initial: List<Voice>) {
     fun assign(e: FloatArray, seconds: Double, atMs: Long): Match {
         val b = best(e)
         if (b != null && b.second >= SAME) {
-            learn(b.first, e, seconds, atMs)
+            if (b.second >= LEARN) learn(b.first, e, seconds, atMs)
+            else touch(b.first, seconds, atMs)
             return Match(b.first.id, b.second)
         }
         if (b != null && b.second >= NEW) return Match(null, b.second)
@@ -119,9 +120,15 @@ class VoiceBank(initial: List<Voice>) {
         return Match(v.id, 1f)
     }
 
+    /** Conta il parlato e l'ultima volta senza spostare l'impronta. */
+    private fun touch(v: Voice, seconds: Double, atMs: Long) {
+        voices[v.id] = v.copy(seconds = v.seconds + seconds, lastMs = maxOf(v.lastMs, atMs))
+        changed += v.id
+    }
+
     private fun learn(v: Voice, e: FloatArray, seconds: Double, atMs: Long) {
         // Media mobile pesata sulla durata, con un tetto: la voce può cambiare un po' nel tempo (raffreddore, posto).
-        val w = (seconds / (v.seconds + seconds)).coerceIn(0.02, 0.5).toFloat()
+        val w = (seconds / (v.seconds + seconds)).coerceIn(0.02, 0.1).toFloat()
         val c = Vec.norm(FloatArray(e.size) { v.centroid[it] * (1 - w) + e[it] * w })
         val samples = if (v.samples.size < MAX_SAMPLES && v.samples.none { Vec.cos(it, e) > 0.9f }) v.samples + listOf(e)
         else if (v.samples.size >= MAX_SAMPLES && seconds >= 4) v.samples.drop(1) + listOf(e) else v.samples
@@ -173,10 +180,14 @@ class VoiceBank(initial: List<Voice>) {
     }
 
     companion object {
-        const val SAME = 0.55f
-        const val NEW = 0.35f
-        const val MERGE = 0.62f
-        const val SAMPLE_PENALTY = 0.03f
+        // 27/11: con 0,55 tutto il 26/11 (Iaco, una ragazza, gli annunci del tram) è finito in "Voce 1".
+        // Stesso telefono e stessa stanza alzano il coseno anche tra persone diverse: servono soglie più alte.
+        const val SAME = 0.70f
+        const val NEW = 0.50f
+        const val MERGE = 0.80f
+        /** Solo sopra questa soglia un pezzo aggiorna l'impronta: evita che una voce "assorba" le altre. */
+        const val LEARN = 0.75f
+        const val SAMPLE_PENALTY = 0.05f
         const val MAX_SAMPLES = 20
         const val MIN_NEW_SECONDS = 2.0
     }
