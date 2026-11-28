@@ -92,6 +92,8 @@ object Assistant {
         ctx?.let { c -> runCatching { Speakers.diagnosis(c, db, day) }.getOrNull() }?.let { sb.append("voci: ").append(it).append("\n") }
         val rough = runCatching { it.iaco.lifelog.Refine.pendingOfDay(ctx ?: return@runCatching 0, day) }.getOrDefault(0)
         if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
+        // Giorno finito, tutto trascritto e rifinito: Claude può analizzarlo senza aspettare altro.
+        if (pending == 0 && rough == 0 && day < LocalDate.now(zone).toString()) sb.append("completo: sì\n")
         sb.append("\n")
         val voices = Speakers.voiceMap(db)
         // Luoghi (se attivi): una riga quando cambia il posto, solo il nome, mai le coordinate.
