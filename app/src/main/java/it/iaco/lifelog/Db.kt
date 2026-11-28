@@ -262,15 +262,29 @@ class Db private constructor(context: Context) :
         bump()
     }
 
+    /** Un buco che passa la mezzanotte si divide per giorno, così ogni giorno ha il suo pezzo. */
     fun insertGap(startMs: Long, endMs: Long, reason: String) {
-        writableDatabase.insert("gaps", null, ContentValues().apply {
-            put("start_ms", startMs)
-            put("end_ms", endMs)
-            put("day", dayOf(startMs))
-            put("reason", reason)
-        })
+        val zone = ZoneId.systemDefault()
+        var from = startMs
+        while (from < endMs) {
+            val nextMidnight = Instant.ofEpochMilli(from).atZone(zone).toLocalDate().plusDays(1)
+                .atStartOfDay(zone).toInstant().toEpochMilli()
+            val to = minOf(endMs, nextMidnight - 1)
+            writableDatabase.insert("gaps", null, ContentValues().apply {
+                put("start_ms", from)
+                put("end_ms", to)
+                put("day", dayOf(from))
+                put("reason", reason)
+            })
+            from = nextMidnight
+        }
         bump()
     }
+
+    /** Giorni che hanno almeno un buco (anche senza parlato), dal più recente. */
+    fun gapDays(): List<String> = readableDatabase.rawQuery(
+        "SELECT DISTINCT day FROM gaps ORDER BY day DESC", null
+    ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
 
     fun days(): List<DaySummary> = readableDatabase.rawQuery(
         """SELECT day, COUNT(*), SUM(CASE WHEN text IS NULL THEN 1 ELSE 0 END),

@@ -124,12 +124,14 @@ object Assistant {
         val db = Db.get(ctx)
         val sp = sp(ctx)
         var sent = 0
-        for (d in db.days().take(21)) {
-            val md = dayMarkdown(db, d.day, ctx)
+        // Anche i giorni con soli buchi (registrazione ferma tutto il giorno): Claude deve sapere perché è vuoto.
+        val days = (db.days().map { it.day } + db.gapDays()).distinct().sortedDescending().take(21)
+        for (day in days) {
+            val md = dayMarkdown(db, day, ctx)
             val h = sha1(md)
-            if (sp.getString("sent_${d.day}", null) == h) continue
-            gh.write("giorni/${d.day}.md", md, "app: giorno ${d.day}")
-            sp.edit().putString("sent_${d.day}", h).apply()
+            if (sp.getString("sent_$day", null) == h) continue
+            gh.write("giorni/$day.md", md, "app: giorno $day")
+            sp.edit().putString("sent_$day", h).apply()
             sent++
         }
         if (runCatching { Briefing.uploadCalendar(ctx, gh) }.getOrDefault(false)) sent++
@@ -164,10 +166,34 @@ object Assistant {
         val arr = JSONArray()
         st.keys().forEach { id -> arr.put(JSONObject(st.getJSONObject(id).toString()).put("id", id)) }
         return JSONObject().put("aggiornato", now()).put("impegni", arr)
+            .put("registrazione", runCatching { recordingJson(ctx) }.getOrDefault(JSONObject()))
             .put("abitudini", runCatching { Memory.marksJson(ctx) }.getOrDefault(JSONArray()))
             .also { Briefing.addState(ctx, it) }
             .also { o -> runCatching { People.stateFields(ctx, o) } }
             .also { o -> runCatching { Miglioramenti.stateField(ctx, o) } }
+    }
+
+    /**
+     * Stato del microfono adesso, per Claude: se un giorno è vuoto, l'analisi dice perché
+     * (fermata da Iaco, in pausa, bloccata dal sistema) invece di "nessuna trascrizione".
+     */
+    private fun recordingJson(ctx: Context): JSONObject {
+        val p = it.iaco.lifelog.Prefs(ctx)
+        fun at(ms: Long): Any = if (ms > 0) Instant.ofEpochMilli(ms).atZone(zone).format(iso) else JSONObject.NULL
+        val pauseUntil = it.iaco.lifelog.Pause.until(ctx)
+        val stato = when {
+            !p.recordingWanted -> "fermata da Iaco"
+            pauseUntil > 0 -> "pausa privacy"
+            it.iaco.lifelog.Watchdog.isStalled(ctx) -> "ferma (bloccata dal sistema o in attesa di un tocco)"
+            else -> "attiva"
+        }
+        val version = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull()
+        return JSONObject()
+            .put("stato", stato)
+            .put("ultimo_segnale", at(p.lastHeartbeat))
+            .put("fermata_il", at(if (!p.recordingWanted) p.stoppedAt else 0L))
+            .put("pausa_fino", at(pauseUntil))
+            .put("versione_app", version ?: JSONObject.NULL)
     }
 
     // ------------------------------------------------------------- ricezione

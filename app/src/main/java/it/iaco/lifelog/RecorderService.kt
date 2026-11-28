@@ -46,6 +46,7 @@ class RecorderService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val prefs = Prefs(this)
         if (intent?.action == ACTION_STOP) {
+            if (prefs.recordingWanted) prefs.stoppedAt = System.currentTimeMillis()
             prefs.recordingWanted = false
             // Una pausa in corso finisce qui: il buco lo salva holdPause() uscendo.
             Pause.resume(this)

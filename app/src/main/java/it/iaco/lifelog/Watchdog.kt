@@ -46,6 +46,14 @@ object Watchdog {
         val p = Prefs(ctx)
         val hb = p.lastHeartbeat
         val now = System.currentTimeMillis()
+        // Fermata a mano da Iaco: il buco va nel giorno, così Claude sa che non è un guasto.
+        val stopped = p.stoppedAt
+        if (stopped > 0) {
+            if (now - stopped > STALE_MS) Db.get(ctx).insertGap(stopped, now, "fermata da Iaco")
+            p.stoppedAt = 0L
+            p.lastHeartbeat = now
+            return
+        }
         if (hb > 0 && now - hb > STALE_MS) {
             val minutes = (now - hb) / 60_000
             val sp = ctx.getSharedPreferences("lifelog", Context.MODE_PRIVATE)
