@@ -12,6 +12,7 @@ class LifelogApp : Application() {
         runCatching { Places.schedule(this) }
         // Modello delle voci: si scarica da solo una volta (senza, nessuna voce viene riconosciuta).
         runCatching { it.iaco.lifelog.people.Speakers.autoDownload(this) }
+        runCatching { Sfondo.autoDownload(this) }
         // Seconda passata con Whisper: modello scaricato da solo, lavoro in coda per la prossima carica.
         runCatching { Refine.ensureWhisper(this); Refine.schedule(this) }
         // Invii notturni a Claude: sveglie da riarmare a ogni avvio (riavvio e aggiornamento le cancellano).

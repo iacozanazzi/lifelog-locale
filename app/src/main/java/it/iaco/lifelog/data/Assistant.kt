@@ -90,12 +90,14 @@ object Assistant {
         val pending = segs.count { it.text == null }
         if (pending > 0) sb.append("ancora da trascrivere: $pending pezzi\n")
         ctx?.let { c -> runCatching { Speakers.diagnosis(c, db, day) }.getOrNull() }?.let { sb.append("voci: ").append(it).append("\n") }
+        runCatching { it.iaco.lifelog.Sfondo.diagnosis(db, day) }.getOrNull()?.let { sb.append("sfondo: ").append(it).append("\n") }
         val rough = runCatching { it.iaco.lifelog.Refine.pendingOfDay(ctx ?: return@runCatching 0, day) }.getOrDefault(0)
         if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
         // Giorno finito, tutto trascritto e rifinito: Claude può analizzarlo senza aspettare altro.
         if (pending == 0 && rough == 0 && day < LocalDate.now(zone).toString()) sb.append("completo: sì\n")
         sb.append("\n")
         val voices = Speakers.voiceMap(db)
+        val tv = runCatching { db.tvOfDay(day) }.getOrDefault(emptySet())
         // Luoghi (se attivi): una riga quando cambia il posto, solo il nome, mai le coordinate.
         val placeOf: (Long) -> String? = ctx?.let { c -> runCatching { it.iaco.lifelog.memory.Places.locator(c, day) }.getOrNull() } ?: { _ -> null }
         var lastPlace: String? = null
@@ -114,7 +116,9 @@ object Assistant {
                 lastPlace = place
             }
             val who = Speakers.label(s.voice, voices)
-            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ").append(who).append(": ").append(t.replace("\n", " ")).append("\n")
+            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ")
+            if (s.id in tv) sb.append("[tv?] ")
+            sb.append(who).append(": ").append(t.replace("\n", " ")).append("\n")
         }
         while (marks.isNotEmpty()) markLine(marks.removeFirst().ms)
         return sb.toString()
