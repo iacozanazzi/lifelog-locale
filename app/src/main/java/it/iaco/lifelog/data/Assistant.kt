@@ -90,10 +90,14 @@ object Assistant {
         val pending = segs.count { it.text == null }
         if (pending > 0) sb.append("ancora da trascrivere: $pending pezzi\n")
         ctx?.let { c -> runCatching { Speakers.diagnosis(c, db, day) }.getOrNull() }?.let { sb.append("voci: ").append(it).append("\n") }
+        runCatching { it.iaco.lifelog.Sfondo.diagnosis(db, day) }.getOrNull()?.let { sb.append("sfondo: ").append(it).append("\n") }
         val rough = runCatching { it.iaco.lifelog.Refine.pendingOfDay(ctx ?: return@runCatching 0, day) }.getOrDefault(0)
         if (rough > 0) sb.append("da rifinire con Whisper: $rough blocchi (testo provvisorio di Parakeet, più errori)\n")
+        // Giorno finito, tutto trascritto e rifinito: Claude può analizzarlo senza aspettare altro.
+        if (pending == 0 && rough == 0 && day < LocalDate.now(zone).toString()) sb.append("completo: sì\n")
         sb.append("\n")
         val voices = Speakers.voiceMap(db)
+        val tv = runCatching { db.tvOfDay(day) }.getOrDefault(emptySet())
         // Luoghi (se attivi): una riga quando cambia il posto, solo il nome, mai le coordinate.
         val placeOf: (Long) -> String? = ctx?.let { c -> runCatching { it.iaco.lifelog.memory.Places.locator(c, day) }.getOrNull() } ?: { _ -> null }
         var lastPlace: String? = null
@@ -112,7 +116,9 @@ object Assistant {
                 lastPlace = place
             }
             val who = Speakers.label(s.voice, voices)
-            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ").append(who).append(": ").append(t.replace("\n", " ")).append("\n")
+            sb.append(Instant.ofEpochMilli(s.startMs).atZone(zone).format(hms)).append(" ")
+            if (s.id in tv) sb.append("[tv?] ")
+            sb.append(who).append(": ").append(t.replace("\n", " ")).append("\n")
         }
         while (marks.isNotEmpty()) markLine(marks.removeFirst().ms)
         return sb.toString()
@@ -124,12 +130,14 @@ object Assistant {
         val db = Db.get(ctx)
         val sp = sp(ctx)
         var sent = 0
-        for (d in db.days().take(21)) {
-            val md = dayMarkdown(db, d.day, ctx)
+        // Anche i giorni con soli buchi (registrazione ferma tutto il giorno): Claude deve sapere perché è vuoto.
+        val days = (db.days().map { it.day } + db.gapDays()).distinct().sortedDescending().take(21)
+        for (day in days) {
+            val md = dayMarkdown(db, day, ctx)
             val h = sha1(md)
-            if (sp.getString("sent_${d.day}", null) == h) continue
-            gh.write("giorni/${d.day}.md", md, "app: giorno ${d.day}")
-            sp.edit().putString("sent_${d.day}", h).apply()
+            if (sp.getString("sent_$day", null) == h) continue
+            gh.write("giorni/$day.md", md, "app: giorno $day")
+            sp.edit().putString("sent_$day", h).apply()
             sent++
         }
         if (runCatching { Briefing.uploadCalendar(ctx, gh) }.getOrDefault(false)) sent++
@@ -164,10 +172,34 @@ object Assistant {
         val arr = JSONArray()
         st.keys().forEach { id -> arr.put(JSONObject(st.getJSONObject(id).toString()).put("id", id)) }
         return JSONObject().put("aggiornato", now()).put("impegni", arr)
+            .put("registrazione", runCatching { recordingJson(ctx) }.getOrDefault(JSONObject()))
             .put("abitudini", runCatching { Memory.marksJson(ctx) }.getOrDefault(JSONArray()))
             .also { Briefing.addState(ctx, it) }
             .also { o -> runCatching { People.stateFields(ctx, o) } }
             .also { o -> runCatching { Miglioramenti.stateField(ctx, o) } }
+    }
+
+    /**
+     * Stato del microfono adesso, per Claude: se un giorno è vuoto, l'analisi dice perché
+     * (fermata da Iaco, in pausa, bloccata dal sistema) invece di "nessuna trascrizione".
+     */
+    private fun recordingJson(ctx: Context): JSONObject {
+        val p = it.iaco.lifelog.Prefs(ctx)
+        fun at(ms: Long): Any = if (ms > 0) Instant.ofEpochMilli(ms).atZone(zone).format(iso) else JSONObject.NULL
+        val pauseUntil = it.iaco.lifelog.Pause.until(ctx)
+        val stato = when {
+            !p.recordingWanted -> "fermata da Iaco"
+            pauseUntil > 0 -> "pausa privacy"
+            it.iaco.lifelog.Watchdog.isStalled(ctx) -> "ferma (bloccata dal sistema o in attesa di un tocco)"
+            else -> "attiva"
+        }
+        val version = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull()
+        return JSONObject()
+            .put("stato", stato)
+            .put("ultimo_segnale", at(p.lastHeartbeat))
+            .put("fermata_il", at(if (!p.recordingWanted) p.stoppedAt else 0L))
+            .put("pausa_fino", at(pauseUntil))
+            .put("versione_app", version ?: JSONObject.NULL)
     }
 
     // ------------------------------------------------------------- ricezione

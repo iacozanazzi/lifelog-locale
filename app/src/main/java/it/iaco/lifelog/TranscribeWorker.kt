@@ -137,6 +137,8 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         val asr = AsrFactory.create(ctx, engine, threads)
         // Persone: chi parla. Nessun effetto se il modello delle voci non è scaricato; ogni errore → voce sconosciuta.
         val speakers = try { it.iaco.lifelog.people.Speakers.Labeler.createOrNull(ctx) } catch (_: Throwable) { null }
+        // Sfondo: TV, radio e musica. Nessun effetto se il modello non è scaricato.
+        val tagger = try { Sfondo.Tagger.createOrNull(ctx) } catch (_: Throwable) { null }
         var done = 0
         try {
             while (true) {
@@ -145,20 +147,36 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
                     prefs.transcribeStatus = it
                     return Outcome.PAUSED
                 }
-                val batch = db.pendingBatch(40)
-                try { speakers?.labelAll(batch) } catch (_: Throwable) {}
-                val group = Chunker.next(batch, speakers?.voices ?: emptyMap()) ?: return Outcome.DONE
+                val all = db.pendingBatch(40)
+                if (all.isEmpty()) return Outcome.DONE
+                val tags = try { Sfondo.tagAll(tagger, db, all) } catch (_: Throwable) { emptyMap() }
+                // Solo musica: non si trascrive (Whisper inventerebbe frasi) e l'audio si butta subito.
+                val music = all.filter { tags[it.id] == Sfondo.MUSICA }
+                if (music.isNotEmpty()) {
+                    music.forEach { m -> db.markGroup(listOf(m), ""); m.audioPath?.let { File(it).delete() } }
+                    done += music.size
+                    continue
+                }
+                val batch = all
+                // Le voci della TV non devono insegnare niente al riconoscimento delle persone.
+                try { speakers?.labelAll(batch.filter { tags[it.id] != Sfondo.TV }) } catch (_: Throwable) {}
+                // "tv" come voce finta: un blocco non mescola TV e persone vere.
+                val voiceOf = (speakers?.voices ?: emptyMap()) + batch.filter { tags[it.id] == Sfondo.TV }.associate { it.id to "__tv" }
+                val group = Chunker.next(batch, voiceOf) ?: return Outcome.DONE
+                val isTv = group.sumOf { if (tags[it.id] == Sfondo.TV) it.endMs - it.startMs else 0L } * 2 >
+                    group.sumOf { it.endMs - it.startMs }
+                runCatching { if (tags[group.first().id] != null || isTv) db.setSfondoTag(group.first().id, if (isTv) Sfondo.TV else Sfondo.NO) }
                 val audio = Chunker.audioOf(group)
                 val raw = if (audio.isEmpty()) "" else asr.transcribe(audio)
                 val whisperNow = engine == Engine.WHISPER || (asr as? AutoAsr)?.lastWasWhisper == true
                 // Whisper sul silenzio o sul rumore inventa frasi come "Grazie a tutti.": si buttano.
                 val text = if (whisperNow && Hallucination.isFake(raw)) "" else raw
                 db.markGroup(group, text)
-                try { speakers?.finishGroup(group) } catch (_: Throwable) {}
+                if (!isTv) try { speakers?.finishGroup(group) } catch (_: Throwable) {}
                 if (audio.isNotEmpty()) Recent.save(ctx, group.first().startMs, audio)
                 // Seconda passata con Whisper in carica: si tiene l'audio del blocco finché non è rifinito.
                 val usedWhisper = engine == Engine.WHISPER || (asr as? AutoAsr)?.lastWasWhisper == true
-                if (audio.isNotEmpty() && text.isNotBlank() && !usedWhisper) {
+                if (audio.isNotEmpty() && text.isNotBlank() && !usedWhisper && !isTv) {
                     try { Refine.save(ctx, group.first(), audio) } catch (_: Throwable) {}
                 }
                 group.forEach { g -> g.audioPath?.let { File(it).delete() } }
@@ -175,6 +193,7 @@ class TranscribeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker
         } finally {
             asr.release()
             try { speakers?.release() } catch (_: Throwable) {}
+            tagger?.release()
         }
     }
 

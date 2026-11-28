@@ -18,6 +18,11 @@ class Prefs(context: Context) {
         get() = sp.getLong("last_heartbeat", 0L)
         set(v) = sp.edit().putLong("last_heartbeat", v).apply()
 
+    /** Quando Iaco ha fermato la registrazione a mano (ms epoch), 0 se non è ferma. */
+    var stoppedAt: Long
+        get() = sp.getLong("stopped_at", 0L)
+        set(v) = sp.edit().putLong("stopped_at", v).apply()
+
     /** Trascrivi solo quando il telefono è in carica. */
     var onlyWhileCharging: Boolean
         get() = sp.getBoolean("only_charging", true)

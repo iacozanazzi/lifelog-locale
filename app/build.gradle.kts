@@ -21,8 +21,9 @@ android {
     }
 
     signingConfigs {
-        // Chiave fissa: così ogni nuova versione si installa sopra la vecchia
-        // senza perdere le trascrizioni. Va bene per uso personale (sideload).
+        // Chiave fissa: così ogni nuova versione si installa sopra la vecchia senza perdere le trascrizioni.
+        // È pubblica: la build su GitHub rifirma l'APK con una chiave nuova (segreto LIFELOG_KEYSTORE_B64,
+        // vedi .github/workflows/build.yml) con la rotazione dello schema v3. Questa resta solo come antenata.
         create("personal") {
             storeFile = file("lifelog.keystore")
             storePassword = "lifelog-locale"

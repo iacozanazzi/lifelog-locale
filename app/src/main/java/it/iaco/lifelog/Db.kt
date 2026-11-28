@@ -32,7 +32,7 @@ data class DaySummary(val day: String, val segments: Int, val pending: Int, val 
  * L'audio viene cancellato appena trascritto: si tiene solo il testo.
  */
 class Db private constructor(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 4) {
+    SQLiteOpenHelper(context.applicationContext, "lifelog.db", null, 5) {
 
     /** Cresce a ogni scrittura: l'interfaccia ricalcola solo quando cambia qualcosa. */
     @Volatile var version = 0L
@@ -63,6 +63,7 @@ class Db private constructor(context: Context) :
         )
         addVoices(db)
         addMarks(db)
+        addSfondo(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -72,7 +73,46 @@ class Db private constructor(context: Context) :
         }
         if (oldVersion < 3) addVoices(db)
         if (oldVersion < 4) addMarks(db)
+        if (oldVersion < 5) addSfondo(db)
     }
+
+    /** Versione 5: audio di sfondo (TV, radio, musica) riconosciuto prima della trascrizione. Solo colonne nuove. */
+    private fun addSfondo(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE segments ADD COLUMN sfondo TEXT")
+        db.execSQL("ALTER TABLE segments ADD COLUMN sfondo_score REAL")
+    }
+
+    // ------------------------------------------------------------- audio di sfondo
+
+    fun setSfondo(id: Long, tag: String, score: Float?) {
+        writableDatabase.update("segments", ContentValues().apply {
+            put("sfondo", tag)
+            if (score == null) putNull("sfondo_score") else put("sfondo_score", score)
+        }, "id=?", arrayOf(id.toString()))
+    }
+
+    /** Cambia solo l'etichetta (il punteggio misurato resta, serve alla diagnosi). */
+    fun setSfondoTag(id: Long, tag: String) {
+        writableDatabase.update("segments", ContentValues().apply { put("sfondo", tag) }, "id=?", arrayOf(id.toString()))
+    }
+
+    /** Etichette già decise per questi pezzi (quelli non ancora ascoltati mancano). */
+    fun sfondoOf(ids: List<Long>): Map<Long, String> {
+        if (ids.isEmpty()) return emptyMap()
+        return readableDatabase.rawQuery(
+            "SELECT id, sfondo FROM segments WHERE sfondo IS NOT NULL AND id IN (${ids.joinToString(",")})", null
+        ).use { c -> buildMap { while (c.moveToNext()) put(c.getLong(0), c.getString(1)) } }
+    }
+
+    /** Pezzi del giorno con etichetta TV o radio (id del primo pezzo di ogni blocco con testo). */
+    fun tvOfDay(day: String): Set<Long> = readableDatabase.rawQuery(
+        "SELECT id FROM segments WHERE day=? AND sfondo='tv' AND text IS NOT NULL AND text != ''", arrayOf(day)
+    ).use { c -> buildSet { while (c.moveToNext()) add(c.getLong(0)) } }
+
+    /** Per la diagnosi: (etichetta, punteggio TV) di ogni pezzo ascoltato del giorno. */
+    fun sfondoRowsOfDay(day: String): List<Pair<String, Float>> = readableDatabase.rawQuery(
+        "SELECT sfondo, COALESCE(sfondo_score,0) FROM segments WHERE day=? AND sfondo IS NOT NULL", arrayOf(day)
+    ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0) to c.getFloat(1)) } }
 
     /** Versione 4: momenti segnati da Iaco. Solo una tabella nuova, il resto non si tocca. */
     private fun addMarks(db: SQLiteDatabase) {
@@ -262,15 +302,29 @@ class Db private constructor(context: Context) :
         bump()
     }
 
+    /** Un buco che passa la mezzanotte si divide per giorno, così ogni giorno ha il suo pezzo. */
     fun insertGap(startMs: Long, endMs: Long, reason: String) {
-        writableDatabase.insert("gaps", null, ContentValues().apply {
-            put("start_ms", startMs)
-            put("end_ms", endMs)
-            put("day", dayOf(startMs))
-            put("reason", reason)
-        })
+        val zone = ZoneId.systemDefault()
+        var from = startMs
+        while (from < endMs) {
+            val nextMidnight = Instant.ofEpochMilli(from).atZone(zone).toLocalDate().plusDays(1)
+                .atStartOfDay(zone).toInstant().toEpochMilli()
+            val to = minOf(endMs, nextMidnight - 1)
+            writableDatabase.insert("gaps", null, ContentValues().apply {
+                put("start_ms", from)
+                put("end_ms", to)
+                put("day", dayOf(from))
+                put("reason", reason)
+            })
+            from = nextMidnight
+        }
         bump()
     }
+
+    /** Giorni che hanno almeno un buco (anche senza parlato), dal più recente. */
+    fun gapDays(): List<String> = readableDatabase.rawQuery(
+        "SELECT DISTINCT day FROM gaps ORDER BY day DESC", null
+    ).use { c -> buildList { while (c.moveToNext()) add(c.getString(0)) } }
 
     fun days(): List<DaySummary> = readableDatabase.rawQuery(
         """SELECT day, COUNT(*), SUM(CASE WHEN text IS NULL THEN 1 ELSE 0 END),

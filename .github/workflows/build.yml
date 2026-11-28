@@ -28,6 +28,33 @@ jobs:
       - name: Compila APK
         run: ./gradlew --no-daemon :app:assembleRelease
 
+      - name: Firma con la chiave nuova (rotazione, schema v3)
+        env:
+          NEW_KS_B64: ${{ secrets.LIFELOG_KEYSTORE_B64 }}
+          NEW_KS_PASS: ${{ secrets.LIFELOG_KEYSTORE_PASS }}
+        run: |
+          # La chiave vecchia (app/lifelog.keystore) è pubblica. Se c'è la chiave nuova nei segreti del repo,
+          # l'APK si firma con la "discendenza" vecchia → nuova: il telefono accetta l'aggiornamento senza perdere
+          # dati, e da lì in poi rifiuta qualsiasi APK firmato solo con la chiave vecchia (rollback disattivato).
+          if [ -z "$NEW_KS_B64" ] || [ -z "$NEW_KS_PASS" ]; then
+            echo "Chiave nuova non impostata: resta la firma vecchia."; exit 0
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          echo "$NEW_KS_B64" | base64 -d > "$RUNNER_TEMP/new.jks"
+          OLD=(--ks app/lifelog.keystore --ks-key-alias lifelog --ks-pass pass:lifelog-locale --key-pass pass:lifelog-locale)
+          NEW=(--ks "$RUNNER_TEMP/new.jks" --ks-key-alias lifelog2 --ks-pass env:NEW_KS_PASS --key-pass env:NEW_KS_PASS)
+          "$BT/apksigner" rotate --out "$RUNNER_TEMP/lineage.bin" \
+            --old-signer "${OLD[@]}" --set-rollback false --set-shared-uid false --set-permission false --set-auth false \
+            --new-signer "${NEW[@]}"
+          APK=app/build/outputs/apk/release/app-release.apk
+          "$BT/apksigner" sign "${OLD[@]}" --next-signer "${NEW[@]}" \
+            --lineage "$RUNNER_TEMP/lineage.bin" --rotation-min-sdk-version 28 --out "$RUNNER_TEMP/signed.apk" "$APK"
+          "$BT/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/signed.apk" | grep -E "Verified|Signer|lineage|rotation" || true
+          "$BT/apksigner" verify "$RUNNER_TEMP/signed.apk"
+          mv "$RUNNER_TEMP/signed.apk" "$APK"
+          rm -f "$RUNNER_TEMP/new.jks" "$RUNNER_TEMP/lineage.bin"
+
       - name: Anteprime delle schermate
         continue-on-error: true
         run: ./gradlew --no-daemon :app:testDebugUnitTest
