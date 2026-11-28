@@ -251,7 +251,7 @@ fun WeekScreen(
         when (s.places) {
             PlacesState.OFF -> item {
                 Text(
-                    "Ricorda dove sei stato e per quanto, così ogni giorno dice anche dove. Usa la posizione di rete ogni 15 minuti, non il GPS: consuma pochissimo. Le posizioni restano sul telefono e i nomi dei posti li dai tu.",
+                    "Ricorda dove sei stato e per quanto, così ogni giorno dice anche dove. Mai il GPS: legge la posizione di rete solo quando ti sposti e, quando sei fermo in un posto, smette finché non ne esci, come Google Maps. Le posizioni restano sul telefono e i nomi dei posti li dai tu.",
                     style = Type.text, color = c.second
                 )
                 SolidButton("Attiva i luoghi", onPlaces, modifier = Modifier.padding(top = 14.dp))

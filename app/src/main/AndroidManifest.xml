@@ -94,6 +94,9 @@
             </intent-filter>
         </service>
         <receiver
+            android:name=".memory.PlacesReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".data.NightAlarmReceiver"
             android:exported="false" />
         <receiver
